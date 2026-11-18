@@ -88,6 +88,24 @@ class SlackAnswered(Base):
         self.assertEqual((suite['lien'], suite['auteur']), (REPLY, 'Toi'))
         self.assertIn(REPLY, [x['lien'] for x in self.p.slack_ouvertes()], 'the suite is checked in its turn')
 
+    def test_a_suite_is_not_closed_by_the_message_that_created_it(self):
+        o = {x['lien']: x['cle'] for x in self.p.slack_ouvertes()}
+        self.p.slack_juger([{'cle': o[ASK1], 'verdict': 'reglee', 'reponse': REPLY,
+                             'suite': 'Poser au client la question du format CSV'}], maintenant=MONDAY + 60)
+        suite = next(x['cle'] for x in self.p.slack_ouvertes() if x['lien'] == REPLY)
+        r = self.p.slack_juger([{'cle': suite, 'verdict': 'reglee', 'reponse': REPLY}], maintenant=MONDAY + 120)
+        self.assertEqual((r['fermees'], [e['cle'] for e in r['ecartes']]), (0, [suite]))
+        self.assertIn(REPLY, [x['lien'] for x in self.p.slack_ouvertes()], 'the suite stays open')
+        later = 'https://exemple.slack.com/archives/C0ABC123/p1793995000000100'
+        r = self.p.slack_juger([{'cle': suite, 'verdict': 'reglee', 'reponse': later}], maintenant=MONDAY + 180)
+        self.assertEqual(r['fermees'], 1, 'a later message of the PM still closes it')
+
+    def test_the_instructions_keep_a_promise_open(self):
+        text = CONSIGNE.read_text(encoding='utf-8')
+        self.assertIn("Une promesse, un report ou une attente", text)
+        self.assertIn("n'est pas un geste fait : elle ne ferme jamais une ligne seule", text)
+        self.assertIn("ce n'est jamais le `lien` de la ligne ni son message parent", text)
+
     def test_invalid_judgments_are_set_aside(self):
         o = {x['lien']: x['cle'] for x in self.p.slack_ouvertes()}
         devis = next(l['cle'] for l in self.a_toi() if 'devis' in l['titre'])

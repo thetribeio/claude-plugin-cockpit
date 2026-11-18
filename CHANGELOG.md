@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.9 · 2026-11-18
+
+La vérification du point du matin ne ferme plus une ligne Slack sur une promesse ou sur son propre lien, et revient à Haiku, à son vrai coût. Effet pour le PM : moins de lignes fermées à tort, et un coût annoncé qui est celui mesuré.
+
+- Le connecteur refuse de fermer une ligne quand la preuve est la demande elle-même, son message parent ou un message plus ancien : la ligne reste ouverte et le refus est compté avec sa raison. Une suite ne se ferme plus avec le message qui l'a créée.
+- La consigne de la tâche dit qu'une promesse, un report ou une attente n'est pas un geste fait, et que la preuve est le lien du message de réponse lui-même, plus tardif que la demande. La tâche planifiée est à mettre à jour (`/cockpit:mon-studio`).
+- La vérification repasse sur Haiku par défaut ; Sonnet reste un choix possible, accepté par `status` sans rien redemander.
+- Les coûts sont ceux mesurés le 2026-11-18 : 34 à 37 appels et 3,5 à 4 M tokens relus par passage pour 16 à 18 lignes Slack ouvertes, environ 0,44 $ par jour sur Haiku ; sur Sonnet, environ 7,7 $ par jour (estimation, non mesurée). Le total passe de 2,03 à 1,92 $ par jour ouvré.
+- Limites connues : le premier relevé réel des fermetures (8 lignes, 3 à tort) remplace l'essai de 18 lignes.
+
 ## 0.3.8 · 2026-11-18
 
 Le README se lit correctement sur GitHub. Effet pour le PM : les phrases de coûts ne s'affichent plus en formules.

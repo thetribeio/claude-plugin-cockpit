@@ -677,9 +677,13 @@ def terminal_login(now=None):
 # `status` reads the model of the task's latest run in the app's session records. The PM sets the model in the task's
 # Edit form (« Modifier »); a scheduled task's effort cannot be set (no form field, no key, no tool parameter): it runs at
 # the app's default effort, so only the model is compared.
-# The check went from Haiku to Sonnet (PM, Q10, 2026-11-17): on the same 18 Slack lines, Haiku closed 4 to 7 depending
-# on the run and none of a Studio's settled lines; Sonnet closed 7, with 2 follow-ups, each one right.
-TASK_MODELS = {'point-du-matin': 'sonnet', 'point-du-matin-verif': 'sonnet'}
+# The check is back on Haiku (0.3.9, measured 2026-11-18): a pass makes 34 to 37 model calls and reads 3.5 to 4 million
+# tokens from the cache for 16 to 18 open Slack lines (the cost follows the number of open lines), not the 3 to 5 calls
+# the Sonnet choice of 0.3.0 assumed; the same volumes on Sonnet cost about 17 times more (see COSTS). Sonnet stays an
+# option the PM may choose (Q10, 2026-11-17: on the same 18 lines it closed more consistently), at its real cost: a
+# last run on an ALSO_MODELS model does not ask for set_task_models.
+TASK_MODELS = {'point-du-matin': 'sonnet', 'point-du-matin-verif': 'haiku'}
+ALSO_MODELS = {'point-du-matin-verif': ['sonnet']}
 RUN_RECORDS_DAYS = 8
 
 
@@ -756,10 +760,11 @@ def morning_blocked(run, now=None):
     return day != run_day
 
 
-def model_is(run, wanted):
-    """True when a run's model is the wanted family (« haiku » in claude-haiku-…). The effort is not compared: a
-    scheduled task cannot choose it."""
-    return wanted in str(run.get('model') or '')
+def model_is(run, wanted, also=()):
+    """True when a run's model is the wanted family (« haiku » in claude-haiku-…) or one of the also-accepted ones. The
+    effort is not compared: a scheduled task cannot choose it."""
+    model = str(run.get('model') or '')
+    return any(family in model for family in (wanted, *also))
 
 
 SETUP_STEPS_FILE = INTERNAL / 'mise-en-route.json'
@@ -785,7 +790,7 @@ def setup_step_costs():
     """The cost line of each step, recorded in cockpit.json (`etapes`) for the block (projets.py cannot read COSTS)."""
     usd = sum(cost_usd(c) for c in morning_step_items())
     return {'matin': f'environ {fr(usd, 2)} $ par jour ouvré, {fr(pct_week(usd) * ACTIVE_DAYS, 2)} % de ta semaine '
-                     'chaque semaine (Sonnet, estimation à remesurer)',
+                     'chaque semaine (« Point du matin » sur Sonnet, estimation à remesurer ; sa vérification sur Haiku, mesurée)',
             'terminal': "moins d'un centime pour la vérification ; ensuite, une réponse par bouton coûte le même tour de "
                         'la session que si tu répondais dedans'}
 
@@ -801,7 +806,7 @@ def step(name):
              'tes mails, Slack et ton agenda pour l\'onglet « Today » et, le lundi, relit les conflits nouveaux des Studios '
              'dont tu es PM, déjà vérifiés et sans ingestion automatique',
              'créerait sa vérification, « Point du matin · vérification » (lundi au vendredi, 11h, 14h et 17h au plus, '
-             'Sonnet) : elle range dans « réglé » ce qui a eu sa réponse et ferme au tableau les lignes Slack auxquelles tu as répondu dans le fil']
+             'Haiku ; Sonnet possible, bien plus cher) : elle range dans « réglé » ce qui a eu sa réponse et ferme au tableau les lignes Slack auxquelles tu as répondu dans le fil']
     rules = script_rules_state()
     if rules == 'missing':
         allow = ((read_json(CLAUDE_SETTINGS, {}) or {}).get('permissions') or {}).get('allow') or [] \
@@ -816,15 +821,18 @@ def step(name):
     elif rules == 'unreadable':
         lines.append(f'laisserait {CLAUDE_SETTINGS}, illisible : les tâches demanderont leurs autorisations à leur '
                      'première exécution')
-    lines.append('te demanderait ensuite un geste par tâche dans « Planifiées » : choisir son modèle, puis « Exécuter '
+    lines.append('te demanderait ensuite un geste par tâche dans « Planifiées » : choisir son modèle (Sonnet pour « Point du '
+                 'matin », Haiku pour sa vérification), puis « Exécuter '
                  'maintenant » et « Toujours autoriser » à chaque demande de l\'agenda, de Gmail et de Slack')
-    out = [PASTE_START, f'Ce que ça coûte par jour ouvré (estimation du {COSTS_DATE}, prix catalogue) :']
+    out = [PASTE_START, f'Ce que ça coûte par jour ouvré (« Point du matin » : estimation du {COSTS_DATE} ; sa vérification : '
+                        'mesurée le 2026-11-18 ; prix catalogue) :']
     for c in morning_step_items():
         tokens = sum(c[2:5])
         out.append(f'- {c[0]} : {tokens_fr(tokens)} tokens (dont {tokens_fr(c[4])} relus en cache), {fr(cost_usd(c), 2)} $, '
                    f'{fr(pct_week(cost_usd(c)) * ACTIVE_DAYS, 2)} % de la semaine par semaine')
     usd = sum(cost_usd(c) for c in morning_step_items())
     out.append(f'- Total de l\'étape : {fr(usd, 2)} $ par jour, {fr(pct_week(usd) * ACTIVE_DAYS, 2)} % de la semaine par semaine')
+    out.append(f'- {verif_sonnet_option()}')
     out.append(PASTE_END)
     return lines + out
 
@@ -854,7 +862,7 @@ def status():
         'morningTaskPrompt': str(MORNING_PROMPT),
         'morningCheckTask': morning_task_state(MORNING_CHECK_TASK, MORNING_CHECK_PROMPT),
         'morningCheckTaskPrompt': str(MORNING_CHECK_PROMPT),
-        'taskModels': {task: {'wanted': {'model': TASK_MODELS[task]}, 'lastRun': run}
+        'taskModels': {task: {'wanted': {'model': TASK_MODELS[task]}, 'also': ALSO_MODELS.get(task, []), 'lastRun': run}
                        for task, run in task_models(runs).items()},
         'morningBlocked': morning_blocked(runs.get('point-du-matin')),
         'projectTools': {name: copy_state(INTERNAL / name, SCRIPTS / name) for name in PROJECT_TOOLS},
@@ -943,7 +951,7 @@ def status():
             todo.append('allow_scripts')
         if s['terminalLogin'] in ('absent', 'deconnecte'):
             todo.append('terminal_login')
-        if any(not model_is(t['lastRun'], TASK_MODELS[task]) for task, t in s['taskModels'].items()):
+        if any(not model_is(t['lastRun'], TASK_MODELS[task], t['also']) for task, t in s['taskModels'].items()):
             todo.append('set_task_models')
         if s['morningBlocked'] and s['morningTask'] != 'absent':
             todo.append('morning_blocked')
@@ -1057,8 +1065,8 @@ def plan():
 # input, written to the cache at x1.25), output, and read again from the cache on every later call of the session.
 # A text a hook injects costs mostly in those re-reads. Injected texts are priced at Opus, the morning tasks at the
 # model the PM sets for them; the volumes were measured with them on Opus medium. The morning tasks run at the app's
-# default effort, high (seen on 2026-11-10, not low as first assumed): their figures are estimates, to measure again
-# after the first real run that is not blocked on a permission prompt.
+# default effort, high (seen on 2026-11-10, not low as first assumed). « Point du matin » is still an estimate, to
+# measure again after the first real run that is not blocked on a permission prompt; its check is measured (2026-11-18).
 # (item, basis, written, output, read from cache, model), tokens a day
 COSTS_DATE = '2026-11-09'
 WEEK_USD = 14.5 * 100
@@ -1084,9 +1092,12 @@ COSTS = [
     ('la tâche « Point du matin » (Sonnet, effort par défaut de l\'app (élevé))',
      'estimation à remesurer après la première exécution réelle débloquée : 1 exécution de 7 à 13 appels', 100_000, 9_000, 1_100_000,
      'sonnet'),
-    ('« Point du matin · vérification » (Sonnet, effort par défaut de l\'app (élevé))',
-     'estimation à remesurer après la première exécution réelle débloquée : 3 passages au plus, de 3 à 5 appels chacun',
-     165_000, 2_000, 1_150_000, 'sonnet'),
+    # Measured on 2026-11-18, two real passes on Haiku: 34 and 37 calls, 0.38 M tokens written, 0.14 M and 0.11 M output,
+    # 3.49 M and 3.98 M read from the cache, for 16 and 18 open Slack lines. A day is three passes of the average.
+    ('« Point du matin · vérification » (Haiku, effort par défaut de l\'app (élevé))',
+     'mesuré le 2026-11-18, deux passages réels : 34 à 37 appels et 3,5 à 4 M tokens relus par passage pour 16 à 18 '
+     'lignes Slack ouvertes ; le coût suit le nombre de lignes Slack ouvertes ; 3 passages au plus par jour',
+     1_140_000, 375_000, 11_205_000, 'haiku'),
     # The Monday pass of the conflicts (PM, Q18, 2026-11-15), in the same run: only what it adds, a fifth of it a day.
     # Not measured: a week of about 20 new subjects (about 12,000 tokens of extracts and the judging instructions, 400
     # output tokens a subject), re-read by the task's 8 calls after `preparer`, x1.5 as conflits.estimer_passe.
@@ -1119,6 +1130,9 @@ UNMEASURED = [
 # The register's high bound: each question costs one more round trip of a session whose 335,000-token context is read
 # again, twice (new and settle).
 QUESTIONS_HIGH_READ = 2 * 335_000 * 13
+# The same volumes of the check at Sonnet's price, per measured pass (written, output, read): the PM may choose Sonnet
+# for it. An estimate, not measured: no real pass has run on Sonnet.
+VERIF_PASSES = [(380_000, 140_000, 3_490_000), (380_000, 110_000, 3_980_000)]
 COSTS_THRESHOLDS = (0.5, 2.0)   # % of the week: one launch, normal use in a week (the maintainer's provisional thresholds)
 # The first relevé of a Studio's conflicts, once per Studio (a « Mise en route » step, each Studio with its own estimate
 # on its line): measured on a real Studio on 2026-11-18, 97 subjects, in the session's transcripts. Sub-agents (Sonnet),
@@ -1152,7 +1166,8 @@ def tokens_fr(n):
 def cost_lines():
     """The cost lines of plan(): one per item, a day, in tokens and as a part of the week, then the total and the
     thresholds."""
-    lines = [f'coûterait, mesuré le {COSTS_DATE} sur la place de l\'auteur (sessions longues : règles, rappel et registre '
+    lines = [f'coûterait, mesuré le {COSTS_DATE} sur la place de l\'auteur, sauf « Point du matin », estimation, et sa '
+             f'vérification, mesurée le 2026-11-18 (sessions longues : règles, rappel et registre '
              'coûteront moins à un PM ; prix catalogue par million de tokens, entrée / sortie / relu en cache : Opus 4 / 20 '
              '/ 0,20 $, Sonnet 2 / 10 / 0,10 $, Haiku 0,10 / 0,50 / 0,01 $, écriture en cache au prix d\'entrée x 1,25 ; '
              '1 % de la semaine = 14,5 $ sur la place de l\'auteur, une place Team au budget relevé que tout PM peut demander ; '
@@ -1163,6 +1178,8 @@ def cost_lines():
         lines.append(f'  {item} : {tokens_fr(written)} tokens écrits, {tokens_fr(output)} en sortie et {tokens_fr(read)} '
                      f'relus en cache par jour, {fr(cost_usd(c), 2)} $, {fr(day, 3)} % de la semaine par jour, '
                      f'{fr(day * ACTIVE_DAYS, 2)} % par semaine ({basis})')
+        if '· vérification' in item:
+            lines.append(f'  {verif_sonnet_option()}')
     usd = sum(cost_usd(c) for c in COSTS)
     launch = next(c for c in COSTS if 'Point du matin »' in c[0] and c[5] == 'sonnet')   # one run, not a day's total
     q = COSTS[-1]
@@ -1177,6 +1194,19 @@ def cost_lines():
     for item, basis in UNMEASURED:
         lines.append(f'  {item} : non mesuré ({basis})')
     return lines
+
+
+def verif_sonnet_option():
+    """The check on Sonnet at its real order of magnitude (estimate, not measured): per pass, a day of three passes, its
+    part of the week, and whether it passes the weekly threshold on its own."""
+    check = next(c for c in COSTS if '· vérification' in c[0])
+    passes = [usd_of(*p, 'sonnet') for p in VERIF_PASSES]
+    usd = usd_of(*check[2:5], 'sonnet')
+    week = pct_week(usd) * ACTIVE_DAYS
+    over = f', au-dessus à elle seule du seuil de {fr(COSTS_THRESHOLDS[1], 0)} %' if week > COSTS_THRESHOLDS[1] else ''
+    return (f'option Sonnet pour la vérification (estimation, non mesurée : aucun passage réel sur Sonnet) : mêmes volumes '
+            f'au prix Sonnet, environ {fr(min(passes), 1)} à {fr(max(passes), 1)} $ par passage, {fr(usd, 1)} $ par jour '
+            f'pour trois passages, {fr(pct_week(usd), 2)} % de la semaine par jour, {fr(week, 1)} % par semaine{over}')
 
 
 def first_survey_line(prefix):
@@ -1198,13 +1228,15 @@ PASTE_END = '--- fin du bloc à coller ---'
 
 def paste_block():
     """The ready-to-paste cost block: per item, tokens a day, $ a day and % of the week a week; then the total."""
-    out = [PASTE_START, f'Ce que ça coûte par jour ouvré (mesuré le {COSTS_DATE} sur la place de l\'auteur, prix catalogue) :']
+    out = [PASTE_START, f'Ce que ça coûte par jour ouvré (mesuré le {COSTS_DATE} sur la place de l\'auteur, prix catalogue ; '
+                         '« Point du matin » est une estimation, sa vérification est mesurée le 2026-11-18) :']
     for c in COSTS:
         item, _, written, output, read, _ = c
         tokens = written + output + read
         step_item = ' (étape de mise en route, seulement si tu la fais)' if c in morning_step_items() else ''
+        option = f' ; {verif_sonnet_option()}' if '· vérification' in item else ''
         out.append(f'- {item} : {tokens_fr(tokens)} tokens (dont {tokens_fr(read)} relus en cache), {fr(cost_usd(c), 2)} $, '
-                   f'{fr(pct_week(cost_usd(c)) * ACTIVE_DAYS, 2)} % de la semaine par semaine{step_item}' if tokens else
+                   f'{fr(pct_week(cost_usd(c)) * ACTIVE_DAYS, 2)} % de la semaine par semaine{step_item}{option}' if tokens else
                    f'- {item} : 0 token, 0 $')
     usd = sum(cost_usd(c) for c in COSTS)
     tokens = sum(sum(c[2:5]) for c in COSTS)

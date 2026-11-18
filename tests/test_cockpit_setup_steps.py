@@ -194,7 +194,7 @@ class Install(unittest.TestCase):
 
 
 class Page(unittest.TestCase):
-    MATIN = {'cle': 'etape-matin', 'etape': 'matin', 'titre': 'Mettre en route le point du matin', 'cout': 'environ 1,04 $',
+    MATIN = {'cle': 'etape-matin', 'etape': 'matin', 'titre': 'Mettre en route le point du matin', 'cout': 'environ 0,94 $',
              'note': 'La passe des conflits du lundi en dépend.', 'detail': 'Chaque jour ouvré…',
              'copier': '/cockpit:mon-studio point du matin'}
     TERMINAL = {'cle': 'etape-terminal', 'etape': 'terminal', 'titre': 'Connecter le Claude du Terminal', 'cout': '',

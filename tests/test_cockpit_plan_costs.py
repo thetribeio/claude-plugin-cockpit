@@ -16,7 +16,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / 'skills' / 'mon-studio' / 'scripts'
 ITEMS = ('la page Mon Studio et le connecteur', 'les règles, au démarrage de chaque session',
          'la ligne de rappel, à chaque message', "Point du matin » (Sonnet, effort par défaut de l'app (élevé))",
-         "Point du matin · vérification » (Sonnet, effort par défaut de l'app (élevé))", '/cockpit:point',
+         "Point du matin · vérification » (Haiku, effort par défaut de l'app (élevé))", '/cockpit:point',
          'le registre des questions, au démarrage', 'le registre des questions, par question')
 
 
@@ -52,7 +52,7 @@ class PlanCosts(unittest.TestCase):
     def test_the_morning_tasks_are_priced_at_their_model(self):
         prices = {c[0]: self.i.cost_usd(c) for c in self.i.COSTS}
         self.assertAlmostEqual(prices["la tâche « Point du matin » (Sonnet, effort par défaut de l'app (élevé))"], 0.45, delta=0.01)
-        self.assertAlmostEqual(prices["« Point du matin · vérification » (Sonnet, effort par défaut de l'app (élevé))"], 0.55,
+        self.assertAlmostEqual(prices["« Point du matin · vérification » (Haiku, effort par défaut de l'app (élevé))"], 0.44,
                                delta=0.01)
         self.assertLess(100 * sum(prices.values()) / self.i.WEEK_USD * self.i.ACTIVE_DAYS, 2.0)
 
@@ -69,10 +69,12 @@ class PlanCosts(unittest.TestCase):
         self.assertIn(f'{self.i.fr(total, 2)} $ par jour', readme)
 
 class MorningEstimates(PlanCosts):
-    def test_the_morning_tasks_say_high_effort_and_estimate_everywhere(self):
+    def test_the_morning_tasks_say_high_effort_and_only_the_morning_one_is_an_estimate(self):
         for c in self.i.COSTS[3:5]:
             self.assertIn("effort par défaut de l'app (élevé)", c[0])
-            self.assertIn('estimation à remesurer', c[1])
+        self.assertIn('estimation à remesurer', self.i.COSTS[3][1])
+        self.assertIn('mesuré le 2026-11-18', self.i.COSTS[4][1])
+        self.assertNotIn('estimation', self.i.COSTS[4][1])
         readme = (ROOT / 'README.md').read_text(encoding='utf-8')
         doc = (ROOT / 'docs' / 'consigne-point-du-matin.md').read_text(encoding='utf-8')
         skill = (ROOT / 'skills' / 'mon-studio' / 'SKILL.md').read_text(encoding='utf-8')
@@ -80,6 +82,22 @@ class MorningEstimates(PlanCosts):
             self.assertIn('à remesurer', text)
         self.assertEqual(readme.count("effort par défaut de l'app (élevé)"), 2)
         self.assertNotIn('effort low', (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8').split('## 0.2.1')[0])
+
+
+class VerificationOnSonnet(PlanCosts):
+    def test_the_sonnet_option_is_priced_at_its_real_order_of_magnitude_and_marked_unmeasured(self):
+        line = next(l for l in self.lines if l.strip().startswith('option Sonnet pour la vérification'))
+        self.assertIn('estimation, non mesurée', line)
+        self.assertRegex(line, r'environ 2,4 à 2,7 \$ par passage, 7,7 \$ par jour pour trois passages, \d,\d+ % de la semaine par jour, '
+                               r'2,7 % par semaine, au-dessus à elle seule du seuil de 2 %')
+        readme = (ROOT / 'README.md').read_text(encoding='utf-8')
+        self.assertIn('2,4 à 2,7 dollars par passage, 7,7 dollars par jour', readme)
+        self.assertEqual(self.i.TASK_MODELS['point-du-matin-verif'], 'haiku')
+        self.assertEqual(self.i.ALSO_MODELS['point-du-matin-verif'], ['sonnet'])
+
+    def test_no_dollar_sign_before_punctuation_in_the_readme(self):
+        readme = (ROOT / 'README.md').read_text(encoding='utf-8')
+        self.assertIsNone(re.search(r'\$[^\w\s]|\$ [,.;:)]', readme))
 
 
 class PasteBlock(PlanCosts):

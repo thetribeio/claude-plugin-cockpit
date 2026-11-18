@@ -1622,8 +1622,8 @@ ETAPE_COMMANDE = {'matin': '/cockpit:mon-studio point du matin', 'terminal': '/c
 TERMINAL_VERIF_S = 600    # `claude auth status` (local, no token) asked at most every 10 minutes while the step waits
 # The cost of each step, written by install.py into cockpit.json (`etapes`) from its one cost list; these defaults
 # only serve before that.
-COUT_ETAPE = {'matin': 'environ 1,04 $ par jour ouvré, 0,36 % de ta semaine chaque semaine (Sonnet, '
-                       'estimation à remesurer)',
+COUT_ETAPE = {'matin': 'environ 0,94 $ par jour ouvré, 0,32 % de ta semaine chaque semaine (« Point du matin » sur '
+                       'Sonnet, estimation à remesurer ; sa vérification sur Haiku, mesurée)',
               'terminal': "moins d'un centime pour la vérification ; ensuite, une réponse par bouton coûte le même tour "
                           "de la session que si tu répondais dedans"}
 
@@ -1767,6 +1767,9 @@ def fermer(cle, maintenant=None):
 # répondu après la demande, la ligne se ferme ; sa réponse annonce une suite, la suite prend sa place. Elle écrit aussi
 # le résumé court de chaque ligne (PM, Q8) : le tableau ne recopie jamais le message ni le fil.
 # Un calcul concurrent peut écraser un jugement : la ligne reste alors ouverte et le passage suivant la juge à nouveau.
+# La preuve d'une fermeture est un message plus tardif que la demande (mesuré le 2026-11-18 : 3 fermetures sur 8 étaient à tort,
+# dont une suite fermée avec le message qui l'avait créée) : le lien de la demande, celui du message parent du fil ou un message
+# antérieur ne ferment rien. Le jugement est écarté, la ligne reste ouverte.
 
 SLACK_MESSAGE = re.compile(r'^https://[a-z0-9-]+\.slack\.com/archives/([A-Z0-9]+)/p(\d{10})(\d{6})(?:\?(\S*))?$', re.I)
 RESUME_MAX = 160
@@ -1803,13 +1806,33 @@ def _phrase(x, n=RESUME_MAX):
     return couper(' '.join(x.split()), n) if isinstance(x, str) else ''
 
 
+def _ts_slack(ts):
+    """L'heure d'un message Slack (« 1794123456.123456 ») en couple d'entiers, comparable."""
+    s, _, us = str(ts).partition('.')
+    return int(s), int(us or 0)
+
+
+def _preuve_refusee(ligne, reponse):
+    """Pourquoi le lien de preuve ne peut pas fermer cette ligne, ou None : c'est la demande elle-même, le message parent
+    de son fil, ou un message antérieur à la demande. Le lien d'une suite est le message qui l'a créée : elle est refusée par le premier cas."""
+    demande, preuve = fil_slack(ligne.get('lien')), fil_slack(reponse)
+    if _ts_slack(preuve['demande_ts']) == _ts_slack(demande['demande_ts']):
+        return 'preuve = la demande elle-même'
+    if demande['message_ts'] != demande['demande_ts'] and _ts_slack(preuve['demande_ts']) == _ts_slack(demande['message_ts']):
+        return 'preuve = le message parent du fil'
+    if _ts_slack(preuve['demande_ts']) < _ts_slack(demande['demande_ts']):
+        return 'preuve antérieure à la demande'
+    return None
+
+
 def slack_juger(jugements, maintenant=None):
     """Les jugements de la vérification sur les lignes Slack ouvertes, un objet par ligne :
         cle      la clé rendue par slack_ouvertes
         verdict  « reglee » (le PM a répondu dans le fil après la demande, ou le geste est fait) ou « ouverte »
         resume   la ligne en une phrase courte, jamais le message recopié (160 signes au plus)
         qui      qui a écrit la demande (« Ana », « Toi » pour un message du PM lui-même)
-        reponse  pour « reglee » : le lien https Slack de la réponse du PM
+        reponse  pour « reglee » : le lien https Slack de la réponse du PM, un message plus tardif que la demande (ni la demande
+                 elle-même, ni le parent de son fil, ni un message antérieur : le jugement est alors écarté, la ligne reste ouverte)
         suite    pour « reglee », facultatif : ce que sa réponse annonce, en une phrase ; elle devient une ligne.
     Un jugement invalide est écarté, les autres passent. Rend les nombres et les écartés avec leur raison."""
     maintenant = time.time() if maintenant is None else maintenant
@@ -1837,6 +1860,10 @@ def slack_juger(jugements, maintenant=None):
         reponse = j.get('reponse')
         if not fil_slack(reponse):
             ecartes.append({'cle': cle, 'raison': 'réponse sans lien Slack'})
+            continue
+        refus = _preuve_refusee(ligne, reponse)
+        if refus:
+            ecartes.append({'cle': cle, 'raison': refus})
             continue
         ligne.update(fermee=maintenant, par='slack', preuve=reponse)
         ligne['journal'] = (ligne.get('journal') or []) + [{'quand': maintenant, 'texte':

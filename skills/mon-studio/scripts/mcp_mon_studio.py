@@ -264,7 +264,7 @@ OUTILS = [
      'description': "Rend le jugement de la vérification sur des lignes Slack ouvertes, un objet par ligne : « cle », "
                     "« verdict » (« reglee » : le PM a répondu dans le fil après la demande ; « ouverte »), « resume » "
                     "(une phrase courte, jamais le message recopié), « qui » (l'auteur de la demande, « Toi » pour un "
-                    "message du PM), « reponse » (lien Slack de la réponse du PM, requis pour « reglee »), « suite » "
+                    "message du PM), « reponse » (lien Slack de la réponse du PM, requis pour « reglee » : un message plus tardif que la demande, ni la demande ni son parent de fil, sinon le jugement est écarté et la ligne reste ouverte), « suite » "
                     "(facultatif : ce que la réponse annonce, en une phrase, qui devient une ligne). N'écrit que l'état "
                     "des lignes de Mon Studio. Réservé à la tâche planifiée de vérification du point du matin.",
      'inputSchema': {'type': 'object', 'properties': {'jugements': {'type': 'array', 'maxItems': 200, 'items': {'type': 'object'}}},
