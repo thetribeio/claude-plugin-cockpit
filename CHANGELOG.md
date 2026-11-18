@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.7 · 2026-11-18
+
+Le README se lit correctement sur GitHub, cette fois vérifié à l'écran. Effet pour le PM : les phrases de coûts ne s'affichent plus en formules.
+
+- Les signes « $ » suivis d'une ponctuation s'écrivent `&#36;` dans le README : GitHub lisait encore la protection de la 0.3.6 comme une formule.
+
 ## 0.3.6 · 2026-11-18
 
 Le README se lit correctement sur GitHub. Effet pour le PM : les deux phrases de coûts qui s'affichaient en formules redeviennent lisibles.
