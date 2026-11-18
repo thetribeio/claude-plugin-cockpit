@@ -1,0 +1,2283 @@
+<style>
+/* Layout : bandeau d'âge en tête, une ligne de boutons vers chaque Studio qui a une action, le tableau de tout ce qui attend (Studio, session, demande, type, ancienneté ; la demande déplie son détail), la liste par projet (un bloc par Studio qui a quelque chose), les demandes anciennes (même tableau, leur propre nombre), les Studios sans action, puis les tableaux de chantier. En tête du tableau, tant qu'il reste une étape, « Mise en route ».
+   Les lignes viennent du connecteur local « mon-studio », jamais de Claude. */
+:root {
+  --bg:#F3F4F6; --panel:#FFFFFF; --ink:#19212C; --muted:#5B6574; --line:#DCE0E6;
+  --accent:#A9690A; --risk:#BE3328; --wait:#B0620F; --decide:#2C5BAE; --gray:#6A7280; --done:#2B7A4B; --soft:#EEF0F3;
+  --f-display:"Barlow Semi Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg:#11151B; --panel:#191F27; --ink:#E6E9ED; --muted:#9AA3B0; --line:#2B333E;
+  --accent:#E2A33C; --risk:#F07A6E; --wait:#E9A253; --decide:#8AAAE9; --gray:#A0A7B3; --done:#6DC291; --soft:#1F2630; color-scheme:dark } }
+:root[data-theme="dark"] {
+  --bg:#11151B; --panel:#191F27; --ink:#E6E9ED; --muted:#9AA3B0; --line:#2B333E;
+  --accent:#E2A33C; --risk:#F07A6E; --wait:#E9A253; --decide:#8AAAE9; --gray:#A0A7B3; --done:#6DC291; --soft:#1F2630; color-scheme:dark }
+* { box-sizing:border-box }
+[hidden] { display:none !important }
+html, body { overflow-x:hidden }
+body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 var(--f-body) }
+.wrap { max-width:1280px; margin:0 auto; padding-inline:20px; padding-block:24px 56px; display:grid; gap:22px; min-width:0 }
+.wrap > * { min-width:0 }
+@media (max-width:560px) { .wrap { padding-inline:16px; padding-block:16px 40px; gap:18px } }
+h1, h2 { font-family:var(--f-display); font-weight:600; margin:0; letter-spacing:.01em; text-wrap:balance }
+h1 { font-size:36px; line-height:1.1 }
+h2 { font-size:22px; line-height:1.2 }
+.wrap > section > h2 { display:flex; flex-wrap:wrap; align-items:baseline; gap:8px; padding-bottom:6px; border-bottom:2px solid var(--line) }
+.eyebrow { font:600 15px var(--f-display); letter-spacing:.06em; color:var(--accent) }
+.muted { color:var(--muted) }
+header { display:grid; gap:8px }
+.age { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:10px 14px; border-radius:8px; border:1px solid var(--line); background:var(--panel) }
+.age .dot { width:10px; height:10px; border-radius:50%; background:var(--gray); flex:none }
+.age.fresh .dot { background:var(--done) } .age.aging .dot { background:var(--wait) } .age.stale .dot { background:var(--risk) }
+.age.stale { border-color:var(--risk) }
+.age strong { font-weight:600 }
+.age .droite { margin-left:auto }
+.banner { padding:12px 14px; border-radius:8px; border:1px solid var(--risk); color:var(--risk); background:var(--panel); font-weight:500; display:flex; flex-wrap:wrap; gap:10px; align-items:center }
+.banner button { font:500 14px var(--f-body); color:var(--ink); background:var(--soft); border:1px solid var(--line); border-radius:6px; padding:4px 12px; cursor:pointer }
+.note { padding:10px 14px; border-radius:8px; border:1px dashed var(--wait); background:var(--panel); color:var(--ink); font-size:14px }
+.boite { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden }
+table { width:100%; border-collapse:collapse }
+thead th { text-align:left; font:600 15px var(--f-display); letter-spacing:.03em; color:var(--muted); padding:10px 14px; border-bottom:1px solid var(--line) }
+thead th.d { text-align:right }
+td { padding:12px 14px; vertical-align:baseline; border-top:1px dashed var(--line) }
+tr.nouveau-studio td { border-top:1px solid var(--line) }
+tbody tr:first-child td { border-top:0 }
+tr[data-deplier] { cursor:pointer }
+tr[data-deplier]:hover td { background:var(--soft) }
+tr.ouvre td { background:var(--soft) }
+td.studio { font:600 16px/1.25 var(--f-display); color:var(--accent); width:14% }
+/* One project only (Vue projet, pinned project page): the project column repeats its name, so it goes (PM, 2026-11-06). */
+#projet-questions td.studio, #projet-questions th:first-child { display:none }
+td.session { width:21%; font-weight:600 }
+td.session .sous { font-size:14px; color:var(--muted); font-weight:400 }
+button.nom { all:unset; cursor:pointer; overflow-wrap:anywhere }
+button.nom:hover { text-decoration:underline }
+.non-lue { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--decide); margin-right:7px; vertical-align:1px }
+td.action .titre { font-weight:500 }
+td.action .suite { color:var(--muted) }
+td.action .apres { font-size:14px; color:var(--muted); white-space:nowrap }
+td.action .ailleurs { color:var(--muted) }
+td.action { overflow-wrap:anywhere }
+button.voir { display:block; width:max-content; margin:6px 0 0 auto; padding:1px 7px; border:1px solid var(--line); border-radius:4px; background:var(--panel); color:var(--gray); font:500 14px var(--f-body); white-space:nowrap; cursor:pointer }
+button.voir:hover, button.voir:focus-visible { color:var(--ink); border-color:var(--gray); outline:none }
+td.action code { font:14px var(--f-mono); background:var(--soft); padding:0 4px; border-radius:3px }
+td.type, td.quand { text-align:right; white-space:nowrap; width:1% }
+/* « Agir » stays narrow (PM, 2026-11-17): « Fait / Retirer du tableau » under the other gestures, the answer buttons
+   wrap, a long « … (recommandé) » goes on two lines rather than squeezing what the line asks. */
+td.type { white-space:normal; min-width:150px; max-width:260px }
+td.type button.fait { display:block; width:max-content; margin:6px 0 0 auto }
+td.type button.decide.choix { white-space:normal; text-align:left; max-width:240px }
+td.type button.ouvrir.sous { display:block; width:max-content; margin:6px 0 0 auto }
+button.act.ouvrir { color:var(--gray) }
+tr.groupe-projet td { padding-top:12px; font-weight:600 }
+tr.groupe-projet button { margin-left:10px }
+dl.fiche { display:grid; grid-template-columns:max-content 1fr; gap:4px 14px; margin:0 0 6px }
+dl.fiche dt { color:var(--muted); font-weight:600 }
+dl.fiche dd { margin:0 }
+dl.fiche .envoi { color:var(--muted); font-size:14px; margin-top:2px }
+td.deplie p.question { margin:0 }
+td.deplie ol.options { margin:0; padding-left:22px; display:grid; gap:3px }
+.pour-reunion { font-weight:600; color:var(--decide); margin-left:4px }
+.chip { font:600 14px var(--f-body); letter-spacing:.03em; border-radius:4px; padding:1px 7px; border:1px solid currentColor; white-space:nowrap }
+.k-go { color:var(--risk) } .k-decision { color:var(--decide) } .k-review { color:var(--wait) } .k-task { color:var(--gray) }
+button.act, a.act { font:600 14px var(--f-body); background:var(--panel); cursor:pointer; padding:3px 10px; border-radius:5px; border:1.5px solid currentColor; white-space:nowrap }
+button.act:hover, button.act:focus-visible, a.act:hover, a.act:focus-visible { background:var(--soft); outline:none }
+.elapsed { font:500 14px var(--f-mono); color:var(--muted); font-variant-numeric:tabular-nums }
+.elapsed.late { color:var(--risk) }
+.due { font:600 14px var(--f-body); color:var(--muted); white-space:nowrap }
+.due.soon { color:var(--risk) }
+.empty { color:var(--muted); font-style:italic; padding:14px 16px; margin:0 }
+td.session.fils-label { color:var(--muted); font-weight:500 }
+table.fils-rouges td.titre { font-weight:500; overflow-wrap:anywhere }
+table.fils-rouges td.agir { text-align:right; white-space:nowrap; width:1% }
+.studios { display:flex; flex-wrap:wrap; gap:10px 16px }
+button.aller { font:600 15px var(--f-display); letter-spacing:.02em; color:var(--accent); background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:4px 12px; white-space:nowrap; cursor:pointer }
+button.aller:hover, button.aller:focus-visible { border-color:var(--accent); background:var(--soft); outline:none }
+button.aller .n { color:var(--muted); font-weight:500 }
+tr[id^="bloc-"] { scroll-margin-top:12px }
+#bloc-autorisations .boite { border-color:var(--risk) }
+td.extrait code { font:14px var(--f-mono); background:var(--soft); padding:1px 5px; border-radius:3px; overflow-wrap:anywhere }
+td.extrait .sans { color:var(--muted); font-style:italic }
+td.agir { text-align:right; white-space:nowrap; width:1% }
+td.agir button + button { margin-left:6px }
+button.decide { font:600 14px var(--f-body); background:var(--panel); cursor:pointer; padding:3px 10px; border-radius:5px; border:1.5px solid currentColor; white-space:nowrap }
+button.decide.oui { color:var(--done) } button.decide.non { color:var(--risk) }
+button.decide:hover, button.decide:focus-visible { background:var(--soft); outline:none }
+button.decide[disabled] { opacity:.5; cursor:default }
+.envoye { font:600 14px var(--f-body); color:var(--muted); white-space:nowrap }
+.reponses { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; margin-top:6px }
+button.decide.choix { color:var(--decide); max-width:100%; overflow:hidden; text-overflow:ellipsis; overflow-wrap:anywhere }
+/* A worded answer button (PM, 2026-11-18) never overflows: two lines at most, then « … ». */
+td.type button.decide.choix, td.action button.decide.choix { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2 }
+/* La bande « En un clic » : légèrement à part, un geste mécanique, rien à se demander. */
+#bloc-autorisations { background:var(--soft); border-radius:10px; padding:12px 14px 14px; margin:4px 0 18px }
+#bloc-autorisations .sous-titre, #bloc-mise-en-route .sous-titre { margin:4px 0 0; font-size:14px; color:var(--muted) }
+#clics:empty, #autorisations:empty { display:none }
+#bloc-projet .bande { background:var(--soft); border-radius:10px; padding:10px 12px 12px; margin-bottom:14px }
+.reponses .copie { font-size:14px; color:var(--muted); align-self:center; overflow-wrap:anywhere }
+button.replier { all:unset; cursor:pointer; display:inline-flex; gap:8px; align-items:baseline }
+button.replier:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px }
+button.replier .fleche { display:inline-block; transition:transform .15s } button.replier[aria-expanded="true"] .fleche { transform:rotate(90deg) }
+/* Un Studio et ses « Vue projet » : un seul groupe à bordure commune, séparés par un filet ; un vrai espace entre deux Studios. */
+.studio-et-vue { display:inline-flex; align-items:stretch; max-width:100%; border:1px solid var(--line); border-radius:6px; overflow:hidden; background:var(--panel) }
+.studio-et-vue > button { min-width:0; overflow:hidden; text-overflow:ellipsis }
+.studio-et-vue > button.aller { border:0; border-radius:0 }
+.vue-projet { font:500 14px var(--f-body); color:var(--muted); background:var(--panel); border:0; border-left:1px solid var(--line); border-radius:0; padding:4px 10px; white-space:nowrap; cursor:pointer }
+.vue-projet:hover, .vue-projet:focus-visible { color:var(--ink); background:var(--soft); outline:none }
+.studio-et-vue > button:focus-visible { box-shadow:inset 0 0 0 2px var(--accent) }
+/* Deux onglets : le tableau (toujours à l'ouverture) et « Today », discret, à droite, avec le nombre d'éléments à traiter. */
+.onglets { display:flex; gap:4px; box-shadow:inset 0 -1px var(--line); overflow-x:auto; overflow-y:hidden }
+.onglets button[role="tab"] { font:600 17px var(--f-display); color:var(--muted); background:none; border:0; border-bottom:3px solid transparent; padding:8px 14px; min-height:44px; white-space:nowrap; cursor:pointer; display:inline-flex; align-items:center; gap:8px }
+.onglets button[role="tab"][aria-selected="true"] { color:var(--ink); border-bottom-color:var(--accent) }
+.onglets button[role="tab"]:hover { color:var(--ink) }
+.onglets button[role="tab"]:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; border-radius:4px }
+.onglets .pastille { font:600 14px var(--f-body); color:var(--panel); background:var(--accent); border-radius:999px; padding:1px 8px; font-variant-numeric:tabular-nums }
+.onglets button.discret { font:500 15px var(--f-body); padding:6px 10px }
+.onglets button.discret .pastille { color:var(--muted); background:var(--soft); font-weight:500 }
+.quand .due + .elapsed { display:block }
+#vue-tableau { display:grid; gap:inherit }
+#bloc-projet { display:grid; gap:12px }
+#bloc-projet .tete { display:flex; flex-wrap:wrap; gap:10px; align-items:center }
+#bloc-projet .tete h2 { font-size:26px; color:var(--accent) }
+#bloc-projet h3 { font:600 17px var(--f-display); margin:6px 0 0 }
+.sujets { display:grid; gap:8px }
+.sujet { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 14px; display:grid; gap:4px }
+.sujet .etat { color:var(--muted); font-size:14px; overflow-wrap:anywhere }
+.sujet .filles { display:grid; gap:4px; margin:4px 0 0 14px; padding-left:10px; border-left:2px solid var(--line) }
+.conflits { margin:0; padding:0; list-style:none; display:grid; gap:8px }
+.conflits li { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 14px; overflow-wrap:anywhere }
+.conflits .valeur { color:var(--muted); font-size:14px; margin-top:2px }
+.conflits .valeur strong { color:var(--ink); font-weight:500 }
+#projet-conflits p.pour-info { margin:2px 0 8px; font-size:15px; color:var(--muted) }
+#projet-onglets { margin:6px 0 12px }
+.journal { margin:0; padding:0; list-style:none; display:grid; gap:6px; font-size:14px }
+.raison { font:600 13px var(--f-body); color:var(--accent, #1d4ed8); background:var(--soft); border-radius:999px; padding:1px 8px; margin-right:6px; white-space:nowrap }
+.raison.court { font-weight:500; color:var(--muted) }
+td.type button.reclasser { display:block; width:max-content; margin:6px 0 0 auto }
+button.reclasser { padding:1px 7px; border:1px solid var(--line); border-radius:4px; background:none; color:var(--muted); font:inherit; font-size:13px; cursor:pointer }
+button.reclasser:hover, button.reclasser:focus-visible { color:var(--ink); border-color:var(--muted) }
+tr.bande-titre td { font:600 15px var(--f-body); padding-top:18px; padding-bottom:6px; border-bottom:1px solid var(--line, #e5e7eb) }
+tr.bande-titre .n { color:var(--muted); font-weight:500 }
+.marque-ancienne { font:500 13px var(--f-body); color:var(--muted); background:var(--soft); border-radius:999px; padding:1px 8px; margin-right:6px; white-space:nowrap }
+.journal .quand { font:500 14px var(--f-mono); color:var(--muted); margin-right:8px }
+td.fils { padding-block:8px }
+button.fil { display:inline-block; margin:2px 6px 2px 0; padding:3px 10px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--ink); font:500 14px var(--f-body); white-space:nowrap; cursor:pointer }
+button.fil:hover, button.fil:focus-visible { background:var(--soft); border-color:var(--accent); outline:none }
+.chantiers { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:10px }
+.chantier { display:grid; gap:2px; padding:14px 16px; background:var(--panel); border:1px solid var(--line); border-radius:8px; color:inherit; text-decoration:none; min-width:0 }
+.chantier:hover, .chantier:focus-visible { border-color:var(--accent); outline:none }
+.chantier .nom { font:600 19px/1.2 var(--f-display); color:var(--accent) }
+.chantier .ou { font-size:14px; color:var(--muted) }
+a:focus-visible, button:focus-visible, tr:focus-visible { outline:2px solid var(--accent); outline-offset:2px }
+tr[hidden] { display:none }
+tr.detail td { border-top:0; padding-top:0 }
+td.deplie .corps { display:grid; gap:6px; font-size:14px; border-top:1px solid var(--line); padding-top:10px; overflow-wrap:anywhere }
+td.deplie dl { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:4px 12px; margin:0 }
+td.deplie dt { color:var(--muted) } td.deplie dd { margin:0 }
+td.deplie code { font:14px var(--f-mono); background:var(--soft); padding:0 4px; border-radius:3px }
+td.deplie ul.attendu { margin:0; padding-left:18px; display:grid; gap:4px; font-size:15px }
+.projets { display:grid; gap:10px }
+.projet { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 16px; min-width:0 }
+.projet h3 { font:600 18px/1.25 var(--f-display); color:var(--accent); margin:0 0 6px; display:flex; flex-wrap:wrap; gap:8px; align-items:baseline }
+.projet .membre { font:500 14px var(--f-body); color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:0 6px }
+.projet ul { list-style:none; margin:0; padding:0 }
+.projet li { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 12px; padding:8px 0; border-top:1px dashed var(--line) }
+.projet li:first-child { border-top:0 }
+.projet .quoi { overflow-wrap:anywhere } .projet .quoi .genre { font-size:14px; color:var(--muted) }
+.projet .plus { grid-column:1; font-size:14px; color:var(--muted); overflow-wrap:anywhere }
+.projet .gestes { grid-column:2; grid-row:1 / span 2; display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:baseline; gap:6px }
+button.fait { padding:1px 7px; border:1px solid var(--line); border-radius:4px; background:var(--panel); color:var(--gray); font:500 14px var(--f-body); white-space:nowrap; cursor:pointer }
+button.fait:hover, button.fait:focus-visible { color:var(--ink); border-color:var(--gray); outline:none }
+button.fait[disabled] { opacity:.5; cursor:default }
+/* Le point du matin (matin.json, écrit par la tâche planifiée) : en tête, une bande pleine largeur au filet ambre, le texte
+   tenu à 860 px. Phrase-titre (pastille de la journée), frise de l'agenda, puis « À traiter », « Réglé » replié, « Préparer demain ». */
+#bloc-matin { background:var(--panel); border:1px solid var(--line); border-top:4px solid var(--accent); border-radius:10px; padding:18px 24px 22px }
+#bloc-matin .bande { max-width:860px }
+/* « Mise en route » : en tête du tableau tant qu'il reste une étape ; une ligne par étape, son coût, son bouton. */
+#bloc-mise-en-route { margin-bottom:18px }
+#bloc-mise-en-route ul.liste { list-style:none; margin:10px 0 0; padding:0 }
+#bloc-mise-en-route ul.liste li { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 14px; padding:12px 14px; border-top:1px solid var(--line); background:var(--panel) }
+#bloc-mise-en-route ul.liste li:first-child { border-top:0 }
+#bloc-mise-en-route .quoi { font-size:17px; font-weight:500; overflow-wrap:anywhere }
+#bloc-mise-en-route .quoi .cout { font-weight:400; color:var(--muted) }
+#bloc-mise-en-route .plus { grid-column:1; font-size:15px; color:var(--muted); overflow-wrap:anywhere }
+#bloc-mise-en-route .plus strong { color:var(--ink); font-weight:500 }
+#bloc-mise-en-route .gestes { grid-column:2; grid-row:1 / span 2; display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:baseline; gap:8px }
+#bloc-mise-en-route button.act { white-space:normal; max-width:280px; text-align:left }
+#bloc-matin .phrase { font:600 30px/1.15 var(--f-display); color:var(--ink); margin:0 0 16px; display:flex; align-items:center; gap:12px; text-wrap:balance }
+#bloc-matin .phrase::before { content:""; flex:none; width:14px; height:14px; border-radius:50%; background:var(--decide) }
+#bloc-matin .phrase.j-lourde::before { background:var(--wait) } #bloc-matin .phrase.j-ouverte::before { background:var(--done) }
+#bloc-matin .frise { list-style:none; margin:0 0 6px; padding:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:14px 0 }
+#bloc-matin .frise li { position:relative; display:grid; align-content:start; gap:2px; padding:16px 14px 0 0; border-top:2px solid var(--line); min-width:0; overflow-wrap:anywhere }
+#bloc-matin .frise li::before { content:""; position:absolute; top:-7px; left:0; width:12px; height:12px; border-radius:50%; background:var(--panel); border:2px solid var(--accent) }
+#bloc-matin .frise .h { font:600 16px var(--f-mono); color:var(--accent); font-variant-numeric:tabular-nums }
+#bloc-matin h3 { font:600 20px/1.25 var(--f-display); color:var(--ink); margin:22px 0 4px }
+#bloc-matin h3 .replier { color:var(--muted) }
+#bloc-matin ul.liste { list-style:none; margin:0; padding:0 }
+#bloc-matin ul.liste li { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 14px; padding:12px 0; border-top:1px solid var(--line) }
+#bloc-matin ul.liste li:first-child { border-top:0 }
+#bloc-matin .quoi { font-size:17px; font-weight:500; overflow-wrap:anywhere }
+#bloc-matin .plus { grid-column:1; font-size:15px; color:var(--muted); overflow-wrap:anywhere }
+#bloc-matin .gestes { grid-column:2; grid-row:1 / span 2; display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:baseline; gap:8px }
+#bloc-matin .source { font-size:15px; font-weight:400; color:var(--muted) }
+#bloc-matin a.act { color:var(--accent); text-decoration:none; display:inline-block }
+#bloc-matin a.act:hover, #bloc-matin a.act:focus-visible { background:var(--soft); outline:none }
+#bloc-matin ul.liste li.groupe { display:block }
+#bloc-matin li.groupe > button.replier { font-size:17px; font-weight:500 }
+#bloc-matin ul.sous { margin:6px 0 0 18px }
+#bloc-matin ul.sous .quoi { font-size:16px; font-weight:400 }
+#bloc-matin ul.regle .quoi { font-size:15px; font-weight:400; color:var(--muted) }
+#bloc-matin ul.demain li { border-left:3px solid var(--decide); padding-left:12px; border-top:0; margin-top:8px }
+#bloc-matin h3.discret { font-size:17px; color:var(--muted) }
+#bloc-matin ul.brouillons .quoi { font-size:16px; font-weight:400 }
+#bloc-matin .empty { padding:0 }
+#bloc-matin p.pour-info { margin:2px 0 8px; font-size:15px; color:var(--muted) }
+#bloc-matin .groupe-entrees { margin-top:12px }
+#bloc-matin .tete-groupe { display:flex; align-items:baseline; gap:10px; font:600 17px var(--f-display); color:var(--accent) }
+#bloc-matin .tete-groupe .n { font-weight:400; color:var(--muted) }
+#bloc-matin li.entree .quoi { cursor:pointer; font-weight:400 }
+#bloc-matin li.entree .quoi .titre { font-weight:500 }
+#bloc-matin .lu { grid-column:1 / -1; background:var(--soft); border-radius:8px; padding:10px 14px; font-size:15px; overflow-wrap:anywhere; max-height:60vh; overflow:auto }
+#bloc-matin .lu h4 { font:600 16px var(--f-display); margin:10px 0 4px } #bloc-matin .lu p { margin:6px 0 }
+#bloc-matin .lu ul, #bloc-matin .lu ol { margin:4px 0; padding-left:20px } #bloc-matin .lu pre { white-space:pre-wrap; font:14px var(--f-mono) }
+tr.surligne td { background:var(--soft); box-shadow:inset 3px 0 0 var(--accent) }
+tr.retiree td { background:var(--soft); color:var(--muted) }
+tr.retiree .titre { text-decoration:line-through }
+@media (max-width:720px) {
+  #bloc-matin { padding:16px 16px 18px }
+  #bloc-matin .phrase { font-size:25px }
+  #bloc-matin ul.liste li, #bloc-mise-en-route ul.liste li { grid-template-columns:minmax(0,1fr) }
+  #bloc-mise-en-route .gestes { grid-column:1; grid-row:3; justify-content:flex-start }
+  #bloc-matin .gestes { grid-column:1; grid-row:3; justify-content:flex-start }
+  #bloc-matin .plus { grid-row:2 }
+}
+@media (max-width:560px) {
+  #bloc-matin .frise { grid-template-columns:minmax(0,1fr); gap:0 }
+  #bloc-matin .frise li { border-top:0; border-left:2px solid var(--line); padding:0 0 12px 18px; margin-left:6px; grid-template-columns:auto minmax(0,1fr); gap:10px; align-items:baseline }
+  #bloc-matin .frise li::before { top:6px; left:-7px }
+}
+.projet .fermees { margin:6px 0 0; font-size:14px; color:var(--muted); overflow-wrap:anywhere }
+@media (max-width:720px) {
+  .projet li { grid-template-columns:minmax(0,1fr) }
+  .projet .gestes { grid-column:1; grid-row:auto; justify-content:flex-start }
+  thead { display:none }
+  table, tbody { display:block }
+  tr { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:4px 10px; padding:10px 14px; border-top:1px dashed var(--line) }
+  tbody tr:first-child { border-top:0 } tr.nouveau-studio { border-top:1px solid var(--line) }
+  td { display:block; padding:0; border:0 !important; width:auto !important; min-width:0 }
+  td.studio, td.session, td.fils, td.deplie { grid-column:1 / -1 } td.studio:empty, td.session:empty { display:none }
+  tr.detail { border-top:0; padding-top:0 }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow" id="sur-titre">Toutes tes sessions</div>
+    <h1 id="titre-page">Mon Studio</h1>
+    <div id="age" class="age"><span class="dot"></span><span><strong id="age-texte">Lecture…</strong> <span class="muted" id="age-date"></span></span><span class="droite" id="compte"></span></div>
+  </header>
+  <div class="banner" id="alerte" hidden><span id="alerte-texte"></span><button type="button" id="alerte-bouton" hidden>Autoriser</button></div>
+  <p class="note" id="sans-transcript" hidden></p>
+  <p class="note" id="note-attentes" hidden></p>
+  <div class="onglets" id="onglets" role="tablist" aria-label="Vues de Mon Studio" hidden>
+    <button type="button" role="tab" id="onglet-tableau" data-onglet="tableau" aria-selected="true" aria-controls="vue-tableau" tabindex="0">Tableau</button>
+    <button type="button" role="tab" id="onglet-matin" data-onglet="matin" aria-selected="false" aria-controls="bloc-matin" tabindex="-1" class="discret">Today</button>
+    <button type="button" role="tab" id="onglet-conflits" data-onglet="conflits" aria-selected="false" aria-controls="bloc-conflits" tabindex="-1" class="discret" hidden>Conflits</button>
+  </div>
+  <section id="bloc-conflits" role="tabpanel" aria-labelledby="onglet-conflits" hidden></section>
+  <section id="bloc-matin" role="tabpanel" aria-labelledby="onglet-matin" hidden>
+    <div class="bande" id="matin"></div>
+  </section>
+  <div id="vue-tableau" role="tabpanel" aria-labelledby="onglet-tableau">
+  <nav class="studios" id="studios" hidden></nav>
+  <section id="bloc-projet" hidden>
+    <div class="tete"><h2 id="projet-nom"></h2><button type="button" class="aller" id="tous-projets" data-tous="1">Tous les projets</button></div>
+    <div class="onglets" id="projet-onglets" role="tablist" aria-label="Vues du projet">
+      <button type="button" role="tab" id="projet-onglet-projet" data-vue-conflits="projet" aria-selected="true" aria-controls="projet-principal" tabindex="0">Projet</button>
+      <button type="button" role="tab" id="projet-onglet-conflits" data-vue-conflits="conflits" aria-selected="false" aria-controls="projet-conflits" tabindex="-1" class="discret">Conflits</button>
+    </div>
+    <div id="projet-principal" role="tabpanel" aria-labelledby="projet-onglet-projet">
+    <p class="note" id="projet-ligne-conflits" hidden></p>
+    <div class="boite" id="projet-questions"></div>
+    <h3><button type="button" class="replier" id="projet-sujets-bascule" data-pli="sujets" aria-expanded="false" aria-controls="projet-sujets"><span class="fleche">▸</span>Fils rouges <span class="muted" id="projet-sujets-n"></span></button></h3><div class="sujets" id="projet-sujets" style="display:none"></div>
+    <div id="projet-bloc-tiers" hidden><h3>Attentes de tiers</h3><div class="boite" id="projet-tiers"></div></div>
+    <h3><button type="button" class="replier" id="projet-journal-bascule" data-pli="journal" aria-expanded="false" aria-controls="projet-journal"><span class="fleche">▸</span>Journal <span class="muted" id="projet-journal-n"></span></button></h3><div id="projet-journal" style="display:none"></div>
+    </div>
+    <section id="projet-conflits" role="tabpanel" aria-labelledby="projet-onglet-conflits" hidden></section>
+  </section>
+  <section id="bloc-mise-en-route" hidden>
+    <h2>Mise en route</h2>
+    <p class="sous-titre">Ce que l'installation n'a pas posé, à faire quand tu veux : chaque étape dit ce qu'elle coûte. Une ligne reste jusqu'à ce qu'elle soit faite, ou « Pas pour moi ».</p>
+    <ul class="liste" id="mise-en-route"></ul>
+  </section>
+  <section id="bloc-autorisations" hidden>
+    <h2 id="autorisations-titre">En un clic</h2>
+    <p class="sous-titre">Autorisations et gestes déjà décidés : un clic suffit, rien d'autre à lire.</p>
+    <div class="boite" id="autorisations" style="margin-top:10px"></div>
+    <div class="boite" id="clics" style="margin-top:10px"></div>
+  </section>
+  <div class="boite" id="boite"><p class="empty" id="vide">Le tableau s'affiche dès que Mon Studio répond sur ton Mac.</p></div>
+  <section id="bloc-projets" hidden>
+    <h2>Projets</h2>
+    <div class="projets" id="projets" style="margin-top:10px"></div>
+  </section>
+  <section id="bloc-attendre" hidden>
+    <h2><button type="button" class="replier" id="attendre-bascule" aria-expanded="false" aria-controls="attendre"><span class="fleche">▸</span>Peut attendre <span class="muted" id="attendre-n"></span></button></h2>
+    <div class="boite" id="attendre" style="margin-top:10px"></div>
+  </section>
+  <section id="bloc-anciennes" hidden>
+    <h2><button type="button" class="replier" id="anciennes-bascule" aria-expanded="false" aria-controls="anciennes"><span class="fleche">▸</span>Anciennes : à traiter ou à archiver <span class="muted" id="anciennes-n"></span></button></h2>
+    <div class="boite" id="anciennes" style="margin-top:10px"></div>
+  </section>
+  <section id="bloc-sans" hidden>
+    <h2><button type="button" class="replier" id="sans-bascule" aria-expanded="false" aria-controls="sans"><span class="fleche">▸</span>Sans action en ce moment <span class="muted" id="sans-n"></span></button></h2>
+    <div class="boite" id="sans" style="margin-top:10px"></div>
+  </section>
+  <section id="bloc-rangees" hidden>
+    <h2>Rangées aujourd'hui</h2>
+    <p class="note" id="rangees-note">Sessions finies archivées sans toi : elles se rouvrent depuis la liste Archivées de l'app.</p>
+    <div class="boite" id="rangees" style="margin-top:10px"></div>
+  </section>
+  <section id="bloc-chantiers" hidden>
+    <h2>Tableaux de suivi</h2>
+    <div class="chantiers" id="chantiers" style="margin-top:10px"></div>
+  </section>
+  </div>
+</div>
+
+<script>
+(function () {
+  var SERVEUR = "host:mon-studio";
+  // Une page projet ne montre que ce projet : ni « Tous les projets », ni les onglets, son nom pour titre.
+  var FIXE = typeof PROJET_FIXE === "string" ? PROJET_FIXE : "";
+  // The blocks of the main board, which span every project: hidden on a project's page (PM, 2026-11-17: « une page
+  // projet ne montre aucun autre projet »). The Studios bar and the Today/Conflits tabs are hidden there too.
+  var HORS_PROJET = ["boite", "bloc-projets", "bloc-attendre", "bloc-anciennes", "bloc-sans", "bloc-rangees", "bloc-chantiers", "bloc-autorisations", "bloc-mise-en-route"];
+  // First day: no Studio found yet, or no session read yet (lecture_app « pas_encore », never the alert).
+  var ACCUEIL = "Aucun Studio trouvé pour l'instant. Ouvre une session dans le dossier d'un Studio : il apparaît ici.";
+  // Un verbe par type, les mêmes que le tableau de chantier.
+  var TYPES = { go: "Go", decision: "Répondre", review: "Relire", task: "Faire", clic: "OK" };
+  function sessionAOuvrir(l) {
+    if (l.ouvrir) return l.ouvrir;
+    if (/^local_/.test(l.cle || "")) return l.cle;
+    var m = /(local_[0-9a-f-]{36})$/.exec(l.lien || "");
+    return m ? m[1] : "";
+  }
+  var JOURS = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."];
+  var $ = function (id) { return document.getElementById(id); };
+  var etat = { ongletProjet: "projet", donnees: null, mcp: null, deplies: {}, empreinte: "", relu: 0, minuteur: 0, image: 0,
+    auto: { actif: false, demandes: [], decisions: [] }, envoyes: {}, parSession: {},
+    att: { actif: false, attentes: [] }, repondues: {}, repParSession: {}, vues: {}, echeance: 0,
+    projet: FIXE, vue: null, clore: false, closes: {}, matinFaits: {}, reglesOuvert: false,
+    onglet: "tableau", entreOuverts: {}, lus: {}, lire: false, surligne: null, etapesCopiees: {} };   // l'onglet n'est jamais retenu : chaque ouverture montre le tableau
+  var BASCULE_MS = 1000;   // un bouton qui vient de changer reste inactif une seconde : jamais un clic sur le mauvais sens
+  // « ok » confirms a gesture done elsewhere: « C'est fait » (PM, 2026-11-17), the session still receives « Qn ok ».
+  var LIBELLE_CHOIX = { go: "Go", oui: "Oui", ok: "C'est fait" };
+  // « Pas encore » is gone (PM, 2026-11-17): « Plus tard » hides the line until tomorrow on the board only and sends
+  // nothing; a session waiting in its Stop hook ends its own wait (reponses_directes_minutes, 10 min by default).
+  var PAS_ENCORE = "pas encore";
+  var RECO = "recommandé : ", RECO_MAX = 28;
+  function premiereMajuscule(t) { return t ? t.charAt(0).toUpperCase() + t.slice(1) : t; }
+  function libelleChoix(c) { return LIBELLE_CHOIX[c] || premiereMajuscule(c); }
+  // « Recommandé » says its choice (PM, 2026-11-17): « Automatique (recommandé) », cut on a word, the full text in the
+  // button's title. When the recommendation is one of the other buttons (« Oui »), that button carries the mark alone;
+  // so does a recommendation that starts with that button's word (« Oui, par défaut… » beside « Oui »): one button.
+  // Worded buttons (PM, 2026-11-18): a numbered option shows its label (parc: choix_libelles, the session's bold label
+  // or the option cut on a word), never « 1 » « 2 »; the recommended option (choix_reco) carries the mark, comes first,
+  // and the « recommandé : … » button that named it goes. The answer sent stays the number.
+  function choixAffiches(choix, l) {
+    var libs = (l && l.choix_libelles) || {}, recoNum = l && l.choix_reco && choix.indexOf(l.choix_reco) >= 0 ? l.choix_reco : "";
+    var nom = function (c) { return libs[c] ? premiereMajuscule(libs[c]) : libelleChoix(c); };
+    choix = choix.filter(function (c) { return c !== PAS_ENCORE; });
+    var reco = choix.filter(function (c) { return c.indexOf(RECO) === 0; })[0], texte = reco ? reco.slice(RECO.length) : "";
+    var pareil = function (a, b) { return a.trim().toLowerCase() === b.trim().toLowerCase(); };
+    var premierMot = function (s) { return (/^[^\s,;:.!?«»()]+/.exec(s.trim().toLowerCase()) || [""])[0]; };
+    var egal = recoNum || (texte && (choix.filter(function (c) { return c !== reco && (pareil(c, texte) || (libs[c] && pareil(libs[c], texte))); })[0] ||
+      choix.filter(function (c) { return c !== reco && !/\s/.test(c.trim()) && c.length > 1 && pareil(c, premierMot(texte)); })[0]));
+    var liste = choix.filter(function (c) { return !(egal && c === reco); }).map(function (c) {
+      if (c === egal) return { c: c, libelle: nom(c) + " (recommandé)", reco: true };
+      if (c !== reco) return { c: c, libelle: nom(c) };
+      var court = texte.length > RECO_MAX ? texte.slice(0, RECO_MAX).replace(/\s+\S*$/, "").replace(/[\s,;:.]+$/, "") + "…" : texte;
+      return { c: c, libelle: premiereMajuscule(court) + " (recommandé)", reco: true };
+    });
+    return liste.filter(function (x) { return x.reco; }).concat(liste.filter(function (x) { return !x.reco; }));
+  }
+  var ENVOYE = { allow: "Envoyé : autorisé cette fois", deny: "Envoyé : refusé" };
+  // La réponse copiée par ligne (« Q25 go » au presse-papiers, la session ouverte), et « Anciennes » dépliée ou non.
+  etat.copies = {}; etat.anciennesOuvertes = false;
+  // « Sujets » and « Journal » of a project, folded by default and opened with one click (PM, 2026-11-12).
+  // « Fils rouges » unfolded (PM, 2026-11-17: the list stands out again), « Journal » folded.
+  etat.sujetsOuverts = true; etat.journalOuvert = false;
+  // The dot on the « Projet » tab (PM, 2026-11-12): the lines that appeared since this page was last opened. The time
+  // of that last opening stays in this browser only (localStorage, per project folder); unreadable storage, no dot.
+  etat.vuAvant = 0;
+  var CLE_VU = "monstudio.vu.";
+  function nfcTexte(s) { return String(s || "").normalize("NFC"); }
+  function passagePrecedent(dossier) {
+    var avant = 0;
+    try { avant = Number(localStorage.getItem(CLE_VU + nfcTexte(dossier))) || 0; } catch (x) { avant = 0; }
+    try { localStorage.setItem(CLE_VU + nfcTexte(dossier), String(Date.now())); } catch (x) {}
+    return avant;
+  }
+  // « Anciennes » (PM, 2026-11-12): when the main table has fewer than 5 lines, the first 5 old ones come up under
+  // it, the most urgent first (close deadline, a session that waits, a deadline, the rest, « à confirmer » last; then
+  // the closest deadline, then the most recent), marked « ancienne ». The others stay folded in « Anciennes ».
+  var REMONTER = 5;
+  function prioriteAncienne(l) { return l.proche ? 0 : l.bloque ? 1 : l.reglee ? 4 : l.echeance ? 2 : 3; }
+  function remonterAnciennes(nPrincipales, anciennes) {
+    if (nPrincipales >= REMONTER || !anciennes.length) return { haut: [], reste: anciennes };
+    var tri = anciennes.map(function (l, i) { return { l: l, i: i }; }).sort(function (a, b) {
+      var pa = prioriteAncienne(a.l), pb = prioriteAncienne(b.l);
+      if (pa !== pb) return pa - pb;
+      if (a.l.echeance && b.l.echeance && a.l.echeance !== b.l.echeance) return a.l.echeance - b.l.echeance;
+      return ((b.l.depuis || 0) - (a.l.depuis || 0)) || a.i - b.i;
+    }).slice(0, REMONTER);
+    var pris = tri.map(function (x) { return x.i; });
+    return { haut: tri.map(function (x) { return Object.assign({}, x.l, { remontee: true }); }),
+      reste: anciennes.filter(function (l, i) { return pris.indexOf(i) < 0; }) };
+  }
+  // Q40 (2026-11-09): an answer given to a session that does not wait on the page, by line (« repondre » with
+  // session and question). The connector wakes it, or keeps the answer until it is free; « en_file » of « attentes »
+  // then says what became of it, and takes over from this local state.
+  etat.confies = {};
+  var COPIE_MS = 120000;   // « copié, colle-le » reste deux minutes sur sa ligne
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function md(s) { return esc(s).replace(/`([^`]+)`/g, "<code>$1</code>"); }
+  function ecoule(ms) {
+    var m = Math.max(0, Math.round(ms / 60000));
+    if (m < 60) return m + " min";
+    var h = Math.round(m / 60); if (h < 24) return h + " h";
+    var d = Math.round(h / 24); return d < 14 ? d + " j" : Math.round(d / 7) + " sem";
+  }
+  function dateLongue(t) { return new Date(t).toLocaleString("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); }
+  // Le dépli d'une ligne, comme au tableau du chantier : le texte complet, ce qui l'a fait apparaître et quand.
+  function cleDe(l) { return l.a_toi ? "demande|" + l.cle : [l.cle, l.question, l.affiche_titre, l.affiche_suite].join("|"); }
+  // Une question réglée dans sa session sans preuve forte reste, « à confirmer » : les mots du tableau du chantier.
+  var A_SON_DEBUT = " : elle s'ouvre à son début, l'app ne sait pas ouvrir un message précis";
+  var A_CONFIRMER = "Tu as écrit à la session après la question et elle s'est mise au travail. Ce n'est pas toujours la réponse : confirme, ou garde la ligne ouverte.";
+  // The files a line points to are read in the page (« Lire », tool « lire »), without leaving Claude (0.2.17). What
+  // the page cannot show (a PDF, a spreadsheet) opens in another application: a second, discreet gesture (« ouvrir »).
+  etat.lisibles = {};
+  function fichierTexte(u) { return !!u && !/^https?:/i.test(u) && /\.(md|txt|csv)$/i.test(u); }
+  function cleFichier(l, chemin) { return (l.a_toi ? l.cle : cleDe(l)) + "|f|" + chemin; }
+  function gesteFichier(l, dossier, chemin) {
+    if (!chemin || !dossier || !etat.mcp) return "";
+    if (fichierTexte(chemin)) {
+      if (!etat.lire) return "";
+      var k = cleFichier(l, chemin);
+      etat.lisibles[k] = { dossier: dossier, fichier: chemin, deplier: cleDe(l) };
+      return '<button type="button" class="act k-task" data-lecture="' + esc(k) + '" aria-expanded="' + !!etat.lus[k] + '" title="Lire ' + esc(chemin) + ' ici">' + (etat.lus[k] ? "Replier" : "Lire") + "</button>";
+    }
+    return '<button type="button" class="voir" data-fichier="' + esc(chemin) + '" data-dossier="' + esc(dossier) + '" title="' + esc(chemin) + ' : la page ne sait pas l\'afficher">Ouvrir dans une autre application</button>';
+  }
+  // A numbered line unfolds to its own question (0.2.17): the whole statement, its options with the one the session
+  // recommends, the files it cites. The PM decides from here; the session opens at its start, never on a message.
+  // Short titles (PM, 2026-11-18): the row shows the title, the click shows the real question in full precision: the
+  // precise question (never the title again), the options in full, then the rubrics the question writes: Recommandé ·
+  // Pourquoi · Ce qu'on attend de toi · Si tu ne fais rien · Pièce. An empty rubric is not shown. « Recommandé » is
+  // written once, on its row.
+  function motsDe(s) { return String(s || "").toLowerCase().normalize("NFC").replace(/[^a-z0-9à-ÿœ]+/g, " ").trim(); }
+  function ajouteAuTitre(texte, l) {
+    var t = motsDe(texte), titre = motsDe([l.question, l.affiche_titre, l.affiche_suite].filter(Boolean).join(" "));
+    return !!t && titre.indexOf(t) < 0;
+  }
+  function sansTitre(t, l) {
+    var titre = String(l.affiche_titre || "").replace(/\s*…$/, ""); t = String(t || "").trim();
+    return titre && t.indexOf(titre) === 0 ? t.slice(titre.length).replace(/^[\s:·—–-]+/, "") : t;
+  }
+  function depliQuestion(l) {
+    var q = l.depli, options = q.options || [], rangs = [], tete = "";
+    var question = typeof q.question === "string" ? q.question : sansTitre(q.enonce, l);
+    if (question && ajouteAuTitre(question, l)) tete += '<p class="question">' + md(question) + "</p>";
+    if (options.length) tete += '<ol class="options">' + options.map(function (o) { return "<li>" + md(o.entiere || o.libelle) + "</li>"; }).join("") + "</ol>";
+    // What the recommended button sends (PM, 2026-11-17): the sentence itself, so the PM knows what leaves.
+    var envoi = (Array.isArray(l.choix) ? choixAffiches(l.choix, l) : []).filter(function (x) { return x.reco; })[0];
+    var recoOption = options.filter(function (o) { return o.recommande; })[0];
+    var reco = (recoOption && (recoOption.gras || recoOption.libelle)) || q.recommande || "";
+    if (reco || envoi) rangs.push(["Recommandé", (reco ? md(reco) : "") + (envoi ? '<div class="envoi">« ' + esc(envoi.libelle.replace(/ \(recommandé\)$/, "")) +
+      " » envoie à la session : « " + esc((l.question && l.copie_numero !== false ? l.question + " " : "") + envoi.c) + " »</div>" : "")]);
+    if (q.pourquoi) rangs.push(["Pourquoi", md(q.pourquoi)]);
+    if (q.attendu) rangs.push(["Ce qu'on attend de toi", md(q.attendu)]);
+    if (q.sinon) rangs.push(["Si tu ne fais rien", md(q.sinon)]);
+    if ((q.fichiers || []).length) rangs.push([q.fichiers.length > 1 ? "Pièces" : "Pièce", '<ul class="fichiers">' + q.fichiers.map(function (c) {
+      return "<li><code>" + esc(c) + "</code> " + gesteFichier(l, l.dossier, c) + rendreLu({ cle: cleFichier(l, c) }) + "</li>";
+    }).join("") + "</ul>"]);
+    return tete + (rangs.length ? '<dl class="fiche">' + rangs.map(function (r) { return "<dt>" + r[0] + "</dt><dd>" + r[1] + "</dd>"; }).join("") + "</dl>" : "");
+  }
+  // A request of the ingestion unfolds only when it adds something (0.2.17): its full text, what to type, the file it
+  // points to (read here); then where it came from. Otherwise the row does not unfold: the title says it all.
+  // A Slack request never copies the message nor the thread (PM, Q8, 2026-11-17): who wrote it, where, the link.
+  function detailAToi(l) {
+    var parts = [], fichier = l.lien_source && !/^https?:/i.test(l.lien_source) ? l.lien_source : "";
+    if (/^https:\/\/([a-z0-9-]+\.)*slack\.com\//i.test(l.lien_source || "")) {
+      if (l.commande) parts.push("<p>À taper dans une session du Studio : <code>" + esc(l.commande) + "</code></p>");
+      return parts.join("") + "<dl><dt>Source</dt><dd>" + esc(quiDemande({ auteur: l.auteur, canal: l.canal, lien: l.lien_source })) +
+        (l.passage ? ", relevé le " + esc(dateCourte(l.passage)) : "") + ' · <a href="' + esc(l.lien_source) +
+        '" target="_blank" rel="noopener noreferrer">Ouvrir le message ↗</a></dd></dl>';
+    }
+    if (l.texte && l.texte !== l.affiche_suite) parts.push("<div>" + md(l.texte) + "</div>");
+    if (l.commande) parts.push("<p>À taper dans une session du Studio : <code>" + esc(l.commande) + "</code></p>");
+    if (fichier) parts.push("<p>Fichier lié : <code>" + esc(fichier) + "</code></p>" + rendreLu({ cle: cleFichier(l, fichier) }));
+    if (!parts.length) return "";
+    var source = "Relevé par l'ingestion" + (l.passage ? " le " + dateCourte(l.passage) : "") + (l.lien_source ? " · " + origineDemande(l.lien_source) : "");
+    return parts.join("") + "<dl><dt>Source</dt><dd>" + esc(source) + "</dd></dl>";
+  }
+  // A line without number unfolds to short bullets: what its session expects of the PM (PM, 2026-11-06).
+  function detail(l) {
+    if (l.a_toi) return detailAToi(l);
+    var puces = Array.isArray(l.puces) && l.puces.length ? '<ul class="attendu">' + l.puces.map(function (p) { return "<li>" + md(p) + "</li>"; }).join("") + "</ul>" : "";
+    var corps = l.depli ? depliQuestion(l) + (l.detail && l.detail !== l.complet && l.detail !== l.depli.enonce && ajouteAuTitre(l.detail, l) ? "<div>" + md(l.detail) + "</div>" : "")
+      : puces || (l.detail && ajouteAuTitre(l.detail, l) ? "<div>" + md(l.detail) + "</div>" : "");
+    // Every line opens on click (PM, 2026-11-18): at least its whole sentence when the row cut it, then where it came
+    // from and when.
+    if (!corps && l.complet && ajouteAuTitre(l.complet, l)) corps = "<div>" + md(l.complet) + "</div>";
+    return corps + "<dl>" +
+      (l.declencheur && !puces && !l.depli ? "<dt>Déclencheur</dt><dd>" + md(l.declencheur) + "</dd>" : "") +
+      "<dt>Apparue</dt><dd>" + esc(dateLongue(l.depuis)) + "</dd>" +
+      (l.reglee ? "<dt>À confirmer</dt><dd>" + esc(A_CONFIRMER) + "</dd>" : "") + "</dl>";
+  }
+  function heure(t) { var d = new Date(t); return d.getHours() + " h " + String(d.getMinutes()).padStart(2, "0"); }
+  function dateCourte(t) { var d = new Date(t); return JOURS[d.getDay()] + " " + d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }) + " à " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }); }
+
+  function alerte(texte, bouton) {
+    $("alerte").hidden = !texte; $("alerte-texte").textContent = texte || "";
+    $("alerte-bouton").hidden = !bouton;
+  }
+
+  // Les « À toi » de la liste par projet (projets.py, champ `liste_projets`) en lignes du tableau, rangées comme les
+  // autres : échéance proche d'abord (la plus proche en tête), puis la plus récente. Une ligne
+  // fermée à la main sur la page disparaît tout de suite.
+  function jourEcheance(e) { var t = new Date(e + "T23:59:00").getTime(); return isNaN(t) ? null : t; }
+  function origineDemande(u) {
+    u = u || "";
+    if (/^https:\/\/([a-z0-9-]+\.)*slack\.com\//i.test(u)) return "Message Slack";
+    if (/^https:\/\/mail\.google\.com\//i.test(u)) return "Mail";
+    if (/^https:\/\/(calendar\.google\.com|www\.google\.com\/calendar)\//i.test(u)) return "Agenda";
+    if (/^https:\/\/(drive|docs)\.google\.com\//i.test(u)) return "Document Drive";
+    if (u && !/^https?:/i.test(u)) return "Fichier du Studio";
+    return "Relevé par l'ingestion";
+  }
+  // Who asks and where (PM, 2026-11-17): « Ana · #projet-client », the person read at the head of the request, the
+  // channel named by the ingestion; « Slack », « Mail »… when nothing names them.
+  function quiDemande(l) {
+    var ou = l.canal || origineDemande(l.lien).replace(/^Message /, "");
+    return [l.auteur, ou].filter(Boolean).join(" · ");
+  }
+  function demandes(d) {
+    var out = { fraiches: [], anciennes: [] }, pj = d && d.liste_projets;
+    var liste = pj && Array.isArray(pj.projets) ? pj.projets : [];
+    var aujourdhui = new Date(); aujourdhui.setHours(0, 0, 0, 0);
+    liste.forEach(function (p) {
+      (p.lignes || []).forEach(function (l) {
+        // The first check of a never-checked Studio (PM, Q14) is a step of « Mise en route » (etapesMiseEnRoute), not a line here.
+        if (l.type === "verifier") return;
+        if (l.type !== "a_toi" || etat.closes[l.cle]) return;
+        var ech = l.echeance ? jourEcheance(l.echeance) : null;
+        // « Ouvrir » seulement vers la session 📬 de ce Studio (`repli` faux) : jamais une autre session à sa place.
+        // A Slack request has no « Ouvrir » (PM, Q11, 2026-11-17): the session opened at its start, useless; « Slack ↗ » stays.
+        // Session column: where the request came from (PM, 2026-11-06: « À toi de jouer » there meant nothing), as plain
+        // text (0.2.17: it read as a button to Slack and opened the 📬 session).
+        var r = { studio: p.nom, session: quiDemande(l), sous: "",
+          ouvrir: !l.repli && l.session && !/^https:\/\/([a-z0-9-]+\.)*slack\.com\//i.test(l.lien || "") ? l.session : "", cle: l.cle, lien: "", type: "task", verbe: "Ouvrir", affiche_titre: "", affiche_suite: l.titre,
+          texte: l.texte || l.titre, commande: l.commande || "", passage: l.passage || null, depuis: l.depuis, echeance: ech,
+          proche: ech !== null && (ech - aujourdhui.getTime()) / 86400000 < 4, a_toi: true, lien_source: l.lien || "", auteur: l.auteur || "", canal: l.canal || "", dossier: p.dossier,
+          projet: p.dossier, tri: l.echeance || "9999-12-31", impact: l.impact || "normal", raison: l.raison || "", effort: l.effort || "" };
+        if (l.reclassee) { r.reclassee = l.reclassee; r.calcul = l.calcul || null; }
+        (l.ancienne ? out.anciennes : out.fraiches).push(r);
+      });
+    });
+    var ordre = function (a, b) {
+      if (a.proche !== b.proche) return a.proche ? -1 : 1;
+      if (a.proche && a.tri !== b.tri) return a.tri < b.tri ? -1 : 1;
+      return b.depuis - a.depuis;
+    };
+    out.fraiches.sort(ordre); out.anciennes.sort(ordre);
+    return out;
+  }
+
+  // Une autorisation que la page sait donner : le hook garde sa demande (outil « autorisations », même session), ou
+  // la page vient d'y répondre (la ligne reste le temps que la session reparte).
+  function autorisationVivante(l) {
+    if (l.arret !== "authorization") return false;
+    var recent = l.cle && etat.parSession[l.cle] && Date.now() - etat.parSession[l.cle].t < 120000;
+    if (recent) return true;
+    if (!etat.auto || !etat.auto.actif) return false;
+    return (etat.auto.demandes || []).some(function (x) { return x.sessionId && x.sessionId === l.cle; });
+  }
+  // Une session arrêtée sur une autorisation sans demande en attente : la page ne peut plus la donner (demande d'avant
+  // l'allumage, hors de l'essai, ou abandonnée par le hook). Une ligne ordinaire, qui ouvre la session. Le passage
+  // d'une tâche planifiée (l.tache) garde son texte, qui nomme la tâche et l'outil.
+  var A_ROUVRIR = "Session arrêtée sur une autorisation : à rouvrir";
+  function horsBande(l) {
+    if (l.arret !== "authorization") return l;
+    return Object.assign({}, l, { arret: "autorisation_a_rouvrir", type: "task", verbe: "Ouvrir", affiche_titre: "",
+      affiche_suite: l.tache ? l.affiche_suite : A_ROUVRIR, detail: l.extrait ? "Ce que la session voulait faire : `" + String(l.extrait).replace(/`/g, "'") + "`" : "" });
+  }
+  // « Fait / Retirer du tableau » (PM, 2026-11-17): on every line. The line greys out with « Annuler » for 10 s, then
+  // leaves for good (« clore »). A request of the ingestion is closed by its key; a line of a session by its « retrait »
+  // key, and its session is told at its next turn.
+  var ANNULER_MS = 10000;
+  etat.retraits = {};
+  // The PM's own order (switch « reclassement », PM 2026-11-17, for him alone at first): one button per line of the
+  // main board, « Pas si urgent » in « D'abord », « À faire d'abord » elsewhere; one more click undoes it. The line moves
+  // at once; the connector keeps his order (« clore » with « reclasser ») and the next reading carries it. Off (no
+  // `reclassement` in the data), nothing of this shows.
+  var CLASSE_PAR_TOI = "classé par toi";
+  etat.reclasses = {};
+  function reclassementAllume() { return !!(etat.donnees && etat.donnees.reclassement); }
+  function selonLePm(l) {
+    if (!reclassementAllume()) return l;
+    var k = cleRetrait(l), x = k && etat.reclasses[k];
+    if (!x) return l;
+    if (x.vers === "annuler") return l.reclassee && l.calcul ? Object.assign({}, l, { impact: l.calcul.impact || "normal", raison: l.calcul.raison || "", reclassee: "" }) : l;
+    return Object.assign({}, l, { impact: x.vers === "dabord" ? "fort" : "normal", raison: CLASSE_PAR_TOI, reclassee: x.vers,
+      calcul: l.calcul || { impact: l.impact, raison: l.raison || "", effort: l.effort || "" } });
+  }
+  // The three bands of the board, from what each line carries (impact, effort, hors_studio): no judgement here.
+  function bandesDuTableau(demandesFraiches, lignes) {
+    // A scheduled pass stopped on its way (en_tete: the morning point not written, an authorization nobody gave) leads
+    // « D'abord » (PM, 2026-11-17: the app marks it « réussie »); then the short answers.
+    var tout = demandesFraiches.concat(lignes).map(selonLePm), court = function (l) { return (l.en_tete ? 0 : 2) + (l.effort === "court" ? 0 : 1); };
+    var stable = function (liste, cle) {
+      return liste.map(function (l, i) { return { l: l, i: i }; }).sort(function (a, b) { return (cle(a.l) - cle(b.l)) || a.i - b.i; }).map(function (x) { return x.l; });
+    };
+    // A line with no movement for 21 days leaves the main board for « Peut attendre » (PM, 2026-11-17), whatever its
+    // impact; an old line brought up because nothing recent waits (remontee) keeps its place.
+    // What the PM put first stays in « D'abord », however old (switch « reclassement »).
+    var attend = function (l) { return l.reclassee !== "dabord" && (l.impact === "faible" || vieille(l)); };
+    return { dabord: stable(tout.filter(function (l) { return !attend(l) && l.impact === "fort"; }), court),
+      ensuite: stable(tout.filter(function (l) { return !attend(l) && l.impact !== "fort"; }), function (l) { return l.hors_studio ? 1 : 0; }),
+      attendre: tout.filter(attend) };
+  }
+  var VIEILLE_MS = 21 * 86400000;
+  function vieille(l) { return !l.remontee && !l.en_tete && !!l.depuis && Date.now() - l.depuis > VIEILLE_MS; }
+  function cleRetrait(l) { return l.a_toi ? l.cle : l.retrait || ""; }
+  function sansPonctuationEnTete(s) { return String(s || "").replace(/^[\s.,;:]+(?=\S)/, "").replace(/^[\s.,;:]+$/, ""); }
+  // A session stopped on its way (authorization nobody can give any more, error, turn cut), not a scheduled pass.
+  function arretee(l) { return !l.tache && !l.en_tete && /^(?:authorization|autorisation_a_rouvrir|interrupted|error)$/.test(l.arret || "") && /^local_/.test(l.cle || ""); }
+  // « Plus tard » (PM, 2026-11-17): the line is hidden until tomorrow on the board only, nothing is sent to its session.
+  // The connector keeps the date (« plus_tard » of « lignes ») so every page agrees; this page's own clicks count too.
+  etat.plusTard = {};
+  function masqueePlusTard(k) {
+    var serveur = (etat.donnees && etat.donnees.plus_tard) || {};
+    return !!k && Math.max(serveur[k] || 0, etat.plusTard[k] || 0) * 1 > Date.now();
+  }
+  function pasRetiree(l) { var k = cleRetrait(l); return !k || (!etat.closes[k] && !masqueePlusTard(k)); }
+  // « En un clic » keeps what one click settles (PM, 2026-11-17): an authorization, a go already decided. A gesture to do
+  // elsewhere (« ok » once it is done) stays only with the link to where it is done, and nothing older than 48 h.
+  var CLIC_MAX_MS = 48 * 3600000;
+  function lienGeste(l) {
+    var m = /https:\/\/[^\s<>"')\]]+/.exec([l.detail, l.complet, l.affiche_suite, l.depli && l.depli.enonce].filter(Boolean).join(" "));
+    return m ? m[0].replace(/[.,;:]+$/, "") : "";
+  }
+  function unClic(l) {
+    if (l.type !== "clic" || l.arret === "authorization" || Date.now() - l.depuis > CLIC_MAX_MS) return false;
+    var geste = Array.isArray(l.choix) && l.choix.length === 1 && l.choix[0] === "ok";
+    return !geste || !!lienGeste(l);
+  }
+  function rendreAge() {
+    var d = etat.donnees, box = $("age");
+    if (!d) return;
+    var s = (Date.now() - d.genere) / 1000;
+    box.className = "age " + (s > 300 ? "stale" : s > 120 ? "aging" : "fresh");
+    $("age-texte").textContent = s < 120 ? "À jour" : "Calculé il y a " + ecoule(s * 1000);
+    $("age-date").textContent = "(" + dateCourte(d.genere) + ")";
+    // The counter (PM, 2026-11-17): the number of lines of « D'abord », the same the band shows. One figure for where
+    // to start, not two (« N à trancher aujourd'hui » counted the lines of the day beside it).
+    var horsBandeL = function (l) { return !autorisationVivante(l) && !unClic(l); };
+    var fraiches = demandes(d).fraiches, lignes = d.lignes;
+    if (etat.projet) {   // a project's page counts its own lines only
+      if (!etat.vue || etat.vue.introuvable) { $("compte").textContent = ""; return; }
+      var nfc = function (s) { return String(s || "").normalize("NFC"); };
+      fraiches = fraiches.filter(function (l) { return nfc(l.projet) === nfc(etat.projet); });
+      lignes = etat.vue.questions || [];
+    }
+    var n = bandesDuTableau(fraiches, lignes.filter(pasRetiree).filter(horsBandeL)).dabord.length;
+    $("compte").textContent = n ? n + " à faire d'abord" : "Rien ne presse";
+    $("compte").title = "Les lignes de « D'abord » : échéance proche ou dépassée, quelqu'un ou une session qui attend, un blocage";
+  }
+
+  // « Peut attendre » and « Anciennes » grouped by project, each group headed by « Tout retirer pour ce projet » (PM,
+  // 2026-11-17): every line of the group leaves, each with its 10 seconds, and « Tout annuler » brings them back.
+  function tableParProjet(liste, entete, rang, bande) {
+    var ordre = [], par = {};
+    liste.forEach(function (l) { var k = l.studio || ""; if (!(k in par)) { par[k] = []; ordre.push(k); } par[k].push(l); });
+    return entete + ordre.map(function (st) {
+      var cles = par[st].map(cleRetrait).filter(function (k) { return k && !etat.closes[k]; });
+      var enCours = cles.filter(function (k) { return etat.retraits[k]; });
+      var geste = !etat.clore || !etat.mcp || !cles.length ? "" : enCours.length === cles.length
+        ? '<button type="button" class="aller" data-annuler-groupe="' + esc(cles.join(" ")) + '" title="Remettre ces lignes">Tout annuler</button>'
+        : '<button type="button" class="fait" data-retirer-groupe="' + esc(cles.join(" ")) + '" title="Retirer toutes ces lignes du tableau (10 secondes pour annuler)">Tout retirer pour ce projet</button>';
+      return '<tr class="groupe-projet nouveau-studio"><td colspan="5"><span class="nom-groupe">' + esc(st || "Hors Studio") + ' <span class="n">· ' + par[st].length + "</span></span>" + geste + "</td></tr>" +
+        par[st].map(function (l) { return rang(l, false, false, bande); }).join("");
+    }).join("") + "</tbody></table>";
+  }
+
+  // A client project: a Studio Mon Studio knows (projets.json), by its name or its folder, not a test nor a tooling one.
+  var OUTILLAGE = /(?:^|[\s_-])(?:test|tests|d[ée]mo|zz|bac à sable|sandbox|prod)(?:$|[\s_-])/i;
+  function projetClient(x) {
+    var studios = (etat.donnees && etat.donnees.liste_projets && etat.donnees.liste_projets.studios) || null;
+    if (!Array.isArray(studios)) return true;
+    var n = function (s) { return String(s || "").normalize("NFC").trim().toLowerCase(); };
+    var st = studios.filter(function (s) { return n(s.nom) === n(x.studio) || n(String(s.dossier || "").replace(/\/+$/, "").split("/").pop()) === n(x.studio); })[0];
+    return !!st && !OUTILLAGE.test(st.nom || "") && !OUTILLAGE.test(x.studio || "");
+  }
+
+  function rendre() {
+    var d = etat.donnees;
+    if (!d) return;
+    rendreAge();
+    var ordre = [], nombre = {};
+    // Les sessions arrêtées sur une autorisation que la page sait donner (demande encore en attente côté hook) vont
+    // dans « En un clic » ; les autres restent au tableau, à leur place, « Ouvrir ↗ ».
+    var autorisations = d.lignes.filter(autorisationVivante);
+    var lignes = d.lignes.filter(pasRetiree).filter(function (l) { return !autorisationVivante(l) && !unClic(l); }).map(horsBande);
+    // Les lignes « clic » qu'un clic règle vont dans la bande « En un clic », avec les autorisations ; les autres au tableau.
+    var clics = d.lignes.filter(pasRetiree).filter(unClic);
+    etat.nClics = clics.length;
+    lignes.forEach(function (l) { if (!(l.studio in nombre)) { nombre[l.studio] = 0; ordre.push(l.studio); } nombre[l.studio]++; });
+    function ancre(studio) { return ' id="bloc-' + ordre.indexOf(studio) + '"'; }
+    function bouton(sid, titre, nonLue, aide) {
+      sid = etat.mcp ? sid : "";
+      return '<button type="button" class="fil"' + (sid ? ' data-sid="' + esc(sid) + '"' : " disabled") + ' title="' + aide + '">' +
+        (nonLue ? '<span class="non-lue" title="non lue"></span>' : "") + esc(titre) + " ↗</button>";
+    }
+    // En haut, un bouton par Studio qui a une action, dans l'ordre du tableau : il descend à son bloc.
+    $("studios").hidden = !ordre.length || !!FIXE || !!etat.projet;
+    // Et, à côté, « Vue projet » : la page ne montre plus que ce projet (PM, 2026-11-03 : « pour ne pas tout mélanger
+    // quand on veut se focus sur un seul projet »). Un bouton par dossier : deux dossiers de même nom restent deux projets.
+    var projets = d.projets || [];
+    $("studios").innerHTML = ordre.map(function (st, i) {
+      var siens = projets.filter(function (p) { return p.studio === st; });
+      return '<span class="studio-et-vue"><button type="button" class="aller" data-aller="' + i + '">' + esc(st) + ' <span class="n">· ' + nombre[st] + "</span></button>" +
+        siens.map(function (p) {
+          return '<button type="button" class="vue-projet" data-projet="' + esc(p.dossier) + '" title="Ne montrer que ce projet">Vue projet' + (siens.length > 1 ? " · " + esc(p.nom) : "") + "</button>";
+        }).join("") + "</span>";
+    }).join("");
+    var entete = "<table><thead><tr><th>Studio</th><th>Session</th><th>Ce qui t'attend</th><th class=\"d\">Agir</th><th class=\"d\">Depuis</th></tr></thead><tbody>";
+    // Une ligne du tableau, fraîche ou ancienne : Studio (au premier rang de son bloc), session, demande, verbe, ancienneté, dépli.
+    function rang(l, nouveauStudio, premier, bande) {
+      var kr = cleRetrait(l);
+      if (kr && etat.closes[kr]) return "";
+      if (kr && etat.retraits[kr]) {
+        return '<tr class="retiree' + (nouveauStudio ? " nouveau-studio" : "") + '"' + (premier ? ancre(l.studio) : "") + '><td class="studio">' + (nouveauStudio ? esc(l.studio) : "") + "</td>" +
+          '<td class="session">' + esc(l.session) + '</td><td class="action"><span class="titre">' + md(l.affiche_titre || l.affiche_suite) + "</span>" +
+          '<span class="apres"> · ' + (etat.retraits[kr].abandon ? "abandonnée, la session sera archivée" : "retirée du tableau") + '</span></td><td class="type"><button type="button" class="aller" data-annuler="' + esc(kr) + '" title="10 secondes pour annuler">Annuler</button></td><td class="quand"></td></tr>';
+      }
+      var sid = etat.mcp ? sessionAOuvrir(l) : "";
+      // La session de la ligne, que son nom ouvre, sans rien copier. Pour un chantier, son
+      // sujet seul, qui n'ouvre rien, comme au tableau du chantier (PM, 2026-10-20) ; sans sujet, la session où il
+      // vit, « Chantier <nom> » dessous. Le reste de la ligne déplie son détail.
+      var session = (l.non_lue ? '<span class="non-lue" title="non lue"></span>' : "") + esc(l.session);
+      if (sid && !l.sujet && !l.a_toi) session = '<button type="button" class="nom" data-sid="' + esc(l.nommee || sid) + '" title="Ouvrir cette session">' + session + "</button>";
+      if (l.sous) session += '<div class="sous">' + esc(l.sous) + "</div>";
+      // Never « : . » nor « : , » at the head of the text (PM, 2026-11-17): what a cut left before the punctuation.
+      var suite = sansPonctuationEnTete(l.affiche_suite);
+      var quoi = l.affiche_titre
+        ? '<span class="titre">' + md(l.affiche_titre) + "</span>" + (suite ? ' <span class="suite">: ' + md(suite) + "</span>" : "")
+        : '<span class="titre">' + md(suite) + "</span>";
+      // The same question relayed by another session (aussi_dans, parc.py): said once, when the match is not sure.
+      if (l.aussi_dans) quoi += '<span class="apres"> · aussi dans ' + esc(l.aussi_dans) + "</span>";
+      // Why a line comes first (PM, 2026-11-17), in a few words; « réponse courte » when one click or one word settles it.
+      if (l.impact === "fort") quoi = (l.raison ? '<span class="raison">' + esc(l.raison) + "</span>" : "") +
+        (l.effort === "court" ? '<span class="raison court">réponse courte</span>' : l.effort === "long" ? '<span class="raison court">long</span>' : "") + quoi;
+      if (l.reclassee && l.impact !== "fort") quoi = '<span class="raison court">' + CLASSE_PAR_TOI + "</span>" + quoi;
+      if (l.remontee) quoi = '<span class="marque-ancienne">ancienne</span>' + quoi;
+      if (l.apres) quoi += '<span class="apres"> · après ' + esc(l.apres) + "</span>";
+      if (l.bloque) quoi += '<span class="apres"> · une session attend</span>';
+      if (l.reglee) quoi += '<span class="apres"> · réglée dans la session, à confirmer</span>';  // the foreman board's wording
+      var verbe = esc(l.verbe || TYPES[l.type] || l.type);
+      // The number only when it is the target session's own (copie_numero, PM 2026-11-06): the foreman's means nothing there.
+      var numero = l.question && l.copie_numero !== false ? l.question : "";
+      var copie = numero ? ' data-copier="' + esc(numero) + '"' : l.copier ? ' data-copier="' + esc(l.copier) + '"' : "";
+      // The app opens a session at its start: no link reaches one of its messages (0.2.17). The unfold carries the question.
+      var aide = (l.a_toi ? "Ouvrir la session 📬 du Studio" : "Ouvrir la session où agir") + (numero ? " (" + esc(numero) + " copié, à coller)" : "") + A_SON_DEBUT;
+      // The button that opens a session says so, everywhere (PM, 2026-11-17: « Go ↗ » opened, « Go » answered).
+      // One style for every « Ouvrir ↗ » (PM, 2026-11-17: orange, black and grey said nothing).
+      var agir = sid ? '<button type="button" class="act k-task ouvrir" data-sid="' + esc(sid) + '"' + copie + ' title="' + verbe + " : " + aide + '">Ouvrir ↗</button>'
+        : l.a_toi ? "" : '<span class="chip k-' + esc(l.type) + '">' + verbe + "</span>";
+      // Une session qui attend la réponse : ses boutons remplacent le verbe qui l'ouvre, pour qu'il n'y ait qu'un « Go »
+      // sur la ligne, la réponse (« Go ↗ » and « Go » side by side made the PM open the session).
+      var reponses = boutonsReponse(l);
+      // A gesture done elsewhere has one button (PM, 2026-11-17): « C'est fait » answers the session and takes the line
+      // off the board (10 seconds to cancel the removal), never beside « Fait / Retirer du tableau ».
+      var faitSeul = !!(kr && etat.clore && /data-choix="ok"/.test(reponses));
+      if (faitSeul) reponses = reponses.replace(/data-choix="ok"/g, 'data-choix="ok" data-retirer-apres="' + esc(kr) + '"');
+      // Every line keeps a way into its session (PM, 2026-11-07): the answer buttons never take the place of « Ouvrir ».
+      if (reponses) agir = reponses + (sid ? '<button type="button" class="act k-task ouvrir sous" data-sid="' + esc(sid) + '"' + copie + ' title="Répondre dans la session' + A_SON_DEBUT + '">Ouvrir ↗</button>' : "");
+      // A gesture to do elsewhere: the link to where it is done, beside « C'est fait ».
+      var geste = l.type === "clic" ? lienGeste(l) : "";
+      if (geste) agir += '<a class="act" href="' + esc(geste) + '" target="_blank" rel="noopener noreferrer" title="Là où le geste se fait">Y aller ↗</a>';
+      // Ligne de chantier : la session qui en parle, seulement quand le verbe mène ailleurs (PM, 2026-11-06 : le verbe
+      // mène désormais à la session qui a posé la question, jamais deux boutons vers la même session).
+      if (l.source && etat.mcp && l.source !== sessionAOuvrir(l)) agir += '<button type="button" class="voir" data-sid="' + esc(l.source) + '" title="' + esc(l.source_titre || "") + '">Ouvrir la session qui demande ↗</button>';
+      // Une demande de l'ingestion : sa source, et « Fait / plus d'actu » (outil « clore »), comme au bloc « Projets ».
+      if (l.verifier && etat.clore && etat.mcp) agir += '<button type="button" class="fait" data-clore="' + esc(l.cle) + '" title="Ne plus proposer ce relevé">Fermer</button>';
+      if (l.a_toi) agir += /^https:\/\//.test(l.lien_source || "") ? boutonSource({ lien: l.lien_source }) : gesteFichier(l, l.dossier, l.lien_source);
+      var age = Date.now() - l.depuis;
+      var gere = kr && etat.clore && etat.mcp;
+      // « Plus tard » where « Pas encore » was (PM, 2026-11-17): hidden until tomorrow, nothing sent.
+      var a = attenteDe(l);
+      if (gere && !faitSeul && ((Array.isArray(l.choix) && l.choix.indexOf(PAS_ENCORE) >= 0) || (a && Array.isArray(a.choix) && a.choix.indexOf(PAS_ENCORE) >= 0)))
+        agir += '<button type="button" class="fait" data-plus-tard="' + esc(kr) + '" title="Masquer cette ligne jusqu\'à demain, sur le tableau seulement : rien n\'est envoyé à la session">Plus tard</button>';
+      // A session stopped for more than 48 h (PM, 2026-11-17): « Abandonner » takes the line off and proposes the session
+      // for archiving (rangement, at the PM's next message in a top-level session).
+      if (gere && arretee(l) && age > 48 * 3600000)
+        agir += '<button type="button" class="fait" data-abandonner="' + esc(kr) + '" title="La ligne part et la session sera archivée à ton prochain message dans une session (10 secondes pour annuler)">Abandonner</button>';
+      else if (gere && !faitSeul) agir += '<button type="button" class="fait" data-retirer="' + esc(kr) + '" title="C\'est fait, ou plus d\'actualité : la ligne quitte le tableau (10 secondes pour annuler)">Fait / Retirer du tableau</button>';
+      // One button that says what it does: out of « D'abord », or into it; on a line he moved, it undoes his order.
+      if (bande && kr && reclassementAllume() && etat.clore && etat.mcp) {
+        var enHaut = bande === "dabord", vers = l.reclassee ? "annuler" : enHaut ? "ensuite" : "dabord";
+        agir += '<button type="button" class="reclasser" data-reclasser="' + vers + "|" + esc(kr) + '" title="' +
+          (vers === "annuler" ? "Annule ton classement : la ligne reprend sa place calculée" : enHaut ? "La ligne passe dans « Ensuite »" : "La ligne passe dans « D'abord »") + '">' +
+          (enHaut ? "Pas si urgent" : "À faire d'abord") + "</button>";
+      }
+      var ecoulee = '<span class="elapsed' + (age > 48 * 3600000 ? " late" : "") + '" title="' + esc(dateCourte(l.depuis)) + '">' + ecoule(age) + "</span>";
+      var quand = l.echeance
+        ? '<span class="due' + (l.proche ? " soon" : "") + '">avant le ' + esc(new Date(l.echeance).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })) + "</span>" + (l.a_toi ? ecoulee : "")
+        : ecoulee;
+      var cle = cleDe(l), ouvert = !!etat.deplies[cle], corps = detail(l);
+      var surligne = l.a_toi && etat.surligne && etat.surligne.cle === l.cle && Date.now() - etat.surligne.t < SURLIGNE_MS;
+      return '<tr class="' + (nouveauStudio ? "nouveau-studio" : "") + (surligne ? " surligne" : "") + '"' + (premier ? ancre(l.studio) : "") +
+        (l.a_toi ? ' data-demande="' + esc(l.cle) + '"' : "") + (corps ? ' data-deplier="' + esc(cle) + '" tabindex="0" aria-expanded="' + ouvert + '"' : "") + ">" +
+        '<td class="studio">' + (nouveauStudio ? esc(l.studio) : "") + "</td>" +
+        '<td class="session">' + session + "</td>" +
+        '<td class="action">' + quoi + "</td>" +
+        '<td class="type">' + agir + "</td>" +
+        '<td class="quand">' + quand + "</td></tr>" +
+        (corps ? '<tr class="detail"' + (ouvert ? "" : " hidden") + '><td class="studio"></td><td class="session"></td><td class="deplie" colspan="3"><div class="corps">' + corps + "</div></td></tr>" : "");
+    }
+    $("clics").innerHTML = clics.length ? entete + clics.map(function (l) { return rang(l, true, false); }).join("") + "</tbody></table>" : "";
+    rendreMiseEnRoute(d);
+    rendreAutorisations(autorisations);
+    rendreMatin(d.matin);
+    rendreProjets(d.liste_projets);
+    // Les demandes « À toi de jouer » de l'ingestion : en tête du tableau, le projet sur chaque
+    // ligne ; celles de plus de 7 jours sans échéance à venir vont dans « Anciennes ».
+    var dem = demandes(d), bandes = bandesDuTableau(dem.fraiches, lignes);
+    var remontees = remonterAnciennes(bandes.dabord.length + bandes.ensuite.length, dem.anciennes.concat(d.anciennes || []).filter(pasRetiree));
+    var anciennes = remontees.reste;
+    var horsService = d.lecture_app && d.lecture_app.etat === "hors_service";
+    // No Studio known yet (first day): say how one appears rather than « Rien ne t'attend ».
+    var aucunStudio = !!(d.liste_projets && Array.isArray(d.liste_projets.studios) && !d.liste_projets.studios.length)
+      || !!(d.lecture_app && d.lecture_app.etat === "pas_encore");
+    if (!bandes.dabord.length && !bandes.ensuite.length && !remontees.haut.length) { $("boite").innerHTML = '<p class="empty">' + (horsService ? "Mon Studio ne lit plus l'app : impossible de dire ce qui t'attend." : autorisations.length ? "Rien d'autre ne t'attend." : anciennes.length || bandes.attendre.length ? "Rien de récent ne t'attend." : aucunStudio ? ACCUEIL : "Rien ne t'attend.") + "</p>"; }
+    else {
+      // Three bands (PM, 2026-11-17: « ce qui est très impactant et très peu coûteux en premier »): « D'abord » the
+      // lines of strong impact, whatever their origin, the short answers first; « Ensuite » the others in the order
+      // they had (requests of the ingestion, then Studio by Studio, the lines outside any Studio last); « Peut
+      // attendre », folded under the table, the lines of weak impact and those with no movement for 21 days.
+      var html = entete, avantStudio = null, ancres = {};
+      var titreBande = function (nom, n) { return '<tr class="bande-titre"><td colspan="5">' + nom + ' <span class="n">· ' + n + "</span></td></tr>"; };
+      var poser = function (bande) {
+        return function (l) {
+          var premier = !l.a_toi && !ancres[l.studio];
+          if (premier) ancres[l.studio] = true;
+          html += rang(l, l.studio !== avantStudio, premier, bande);
+          avantStudio = l.studio;
+        };
+      };
+      if (bandes.dabord.length) html += titreBande("D'abord", bandes.dabord.length);
+      bandes.dabord.forEach(poser("dabord"));
+      avantStudio = null;
+      if (bandes.dabord.length && bandes.ensuite.length + remontees.haut.length) html += titreBande("Ensuite", bandes.ensuite.length + remontees.haut.length);
+      bandes.ensuite.forEach(poser("ensuite"));
+      remontees.haut.forEach(function (l) { html += rang(l, l.studio !== avantStudio, false); avantStudio = l.studio; });
+      $("boite").innerHTML = html + "</tbody></table>";
+    }
+    var attendre = bandes.attendre;
+    $("bloc-attendre").hidden = !attendre.length;
+    $("attendre-n").textContent = attendre.length ? "· " + attendre.length : "";
+    $("attendre").style.display = etat.attendreOuvert ? "" : "none";
+    $("attendre-bascule").setAttribute("aria-expanded", String(!!etat.attendreOuvert));
+    $("attendre").innerHTML = attendre.length ? tableParProjet(attendre, entete, rang, "attendre") : "";
+    // Sous les demandes fraîches, les anciennes : même rang, leur propre nombre (les lignes déjà retirées hors du
+    // compte : 84 annoncées pour 79 montrées, revue du 2026-11-17), hors du compte du haut.
+    $("bloc-anciennes").hidden = !anciennes.length;
+    $("anciennes-n").textContent = anciennes.length ? "· " + anciennes.length : "";
+    // Repliées par défaut : une ligne que rien n'a reportée depuis sept jours.
+    $("anciennes").style.display = etat.anciennesOuvertes ? "" : "none";
+    $("anciennes-bascule").setAttribute("aria-expanded", String(etat.anciennesOuvertes));
+    $("anciennes").innerHTML = anciennes.length ? tableParProjet(anciennes, entete, rang) : "";
+    // En bas, les Studios encore en cours sans action : leur dernière session et où on en est.
+    // « Sans action », folded, client projects only (PM, 2026-11-17): a known Studio, not a test nor a tooling one.
+    var sans = (d.sans_action || []).filter(projetClient);
+    $("bloc-sans").hidden = !sans.length;
+    $("sans-n").textContent = sans.length ? "· " + sans.length : "";
+    $("sans").style.display = etat.sansOuvert ? "" : "none";
+    $("sans-bascule").setAttribute("aria-expanded", String(!!etat.sansOuvert));
+    $("sans").innerHTML = sans.length ? "<table><thead><tr><th>Studio</th><th>Dernière session</th><th>Où on en est</th><th class=\"d\">Dernière activité</th></tr></thead><tbody>" +
+      sans.map(function (x) {
+        var jour = x.derniere ? new Date(x.derniere) : null;
+        return '<tr class="nouveau-studio"><td class="studio">' + esc(x.studio) + "</td>" +
+          '<td class="session">' + bouton(x.sessionId, x.titre, x.non_lue, "Ouvrir la session") + "</td>" +
+          '<td class="action">' + md(x.etat || "") + "</td>" +
+          '<td class="quand">' + (jour ? '<span class="elapsed" title="' + esc(dateCourte(x.derniere)) + '">' + JOURS[jour.getDay()] + " " +
+            jour.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }) + "</span>" : "") + "</td></tr>";
+      }).join("") + "</tbody></table>" : "";
+    // Les sessions finies que le rangement a archivées aujourd'hui (hooks/rangement.py) : leur titre, pour les rouvrir.
+    var rangees = d.rangees || [];
+    $("bloc-rangees").hidden = !rangees.length;
+    $("rangees").innerHTML = rangees.length ? "<table><tbody>" + rangees.map(function (x) {
+      return '<tr><td class="session">' + bouton(x.id, x.titre || "Session sans titre", false, "Rouvrir la session archivée") + "</td>" +
+        '<td class="quand"><span class="elapsed" title="' + esc(dateCourte(x.quand)) + '">' +
+        new Date(x.quand).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) + "</span></td></tr>";
+    }).join("") + "</tbody></table>" : "";
+    var ch = d.chantiers || [];
+    $("bloc-chantiers").hidden = !ch.length;
+    $("chantiers").innerHTML = ch.map(function (c) {
+      return '<a class="chantier" href="' + esc(c.tableau) + '" target="_blank" rel="noopener"><span class="nom">' + esc(c.chantier) + '</span><span class="ou">' + esc(c.studio || "") + "</span></a>";
+    }).join("");
+    rendreProjet(rang, entete);
+    planifierEcheance();
+  }
+
+  // « Mise en route » (PM, revue du 2026-11-15, Q4 et Q8) : ce que l'installation ne pose plus, en tête du tableau dès le
+  // premier jour, sans délai ni relance. Le point du matin d'abord (« Today » et la passe des conflits du lundi en
+  // dépendent), puis le premier relevé des conflits de chaque Studio jamais vérifié (lignes `verifier` de la liste par
+  // projet), puis la connexion du Terminal. Une étape part quand le Mac la voit faite, ou sur « Pas pour moi » (« clore »).
+  // Son bouton copie la commande à coller dans une nouvelle session : la page n'en ouvre pas ; un relevé ouvre sa session.
+  var VERIFS_EN_LIGNES = 3;
+  function etapesMiseEnRoute(d) {
+    if (FIXE || !d) return [];
+    var mr = d.mise_en_route && Array.isArray(d.mise_en_route.etapes) ? d.mise_en_route.etapes : [];
+    var pj = d.liste_projets, liste = pj && Array.isArray(pj.projets) ? pj.projets : [], out = [];
+    var ouverte = function (e) { return e && e.cle && !etat.closes[e.cle]; };
+    mr.filter(function (e) { return e.etape === "matin" && ouverte(e); }).forEach(function (e) { out.push(e); });
+    var verifs = [];
+    liste.forEach(function (p) {
+      (p.lignes || []).forEach(function (l) {
+        if (l.type === "verifier" && ouverte(l)) verifs.push({ cle: l.cle, etape: "conflits", titre: "Vérifier les conflits de " + p.nom + ", une fois",
+          nom: p.nom, cout: "", note: "", detail: l.detail || "", session: l.session || "", copier: l.copier || "" });
+      });
+    });
+    // A PM may have a dozen Studios never checked (0.2.17): beyond three, one line holds them all, each with its button.
+    if (verifs.length > VERIFS_EN_LIGNES) out.push({ cle: "conflits-groupe", etape: "conflits-groupe", titre: "Vérifier les conflits de " + verifs.length + " Studios, une fois chacun",
+      cout: "", note: "", detail: "Un premier relevé par Studio, quand tu veux : chaque bouton ouvre la session où le faire. Un Studio part de la liste une fois vérifié ; « Pas pour moi » les retire tous.", items: verifs });
+    else verifs.forEach(function (e) { out.push(e); });
+    mr.filter(function (e) { return e.etape !== "matin" && ouverte(e); }).forEach(function (e) { out.push(e); });
+    return out;
+  }
+  function matinEnAttente(d) {
+    var mr = d && d.mise_en_route;
+    return !FIXE && !!mr && mr.matin === "a_faire" && !etat.closes["etape-matin"];
+  }
+  function rendreMiseEnRoute(d) {
+    var etapes = etapesMiseEnRoute(d);
+    $("bloc-mise-en-route").hidden = !etapes.length;
+    $("mise-en-route").innerHTML = etapes.map(function (e) {
+      var gestes = "", liste = "";
+      if (e.etape === "conflits-groupe") {
+        if (etat.clore && etat.mcp) gestes += '<button type="button" class="fait" data-ecarter-groupe="' + esc(e.items.map(function (x) { return x.cle; }).join(" ")) + '" title="Retirer ces relevés pour de bon">Pas pour moi</button>';
+        liste = '<ul class="studios-a-verifier">' + e.items.map(function (x) {
+          return "<li>" + esc(x.nom) + (x.session && etat.mcp ? ' <button type="button" class="act k-task" data-sid="' + esc(x.session) + '"' + (x.copier ? ' data-copier="' + esc(x.copier) + '"' : "") +
+            ' title="Ouvre la session où faire ce relevé">Vérifier ↗</button>' : "") + "</li>";
+        }).join("") + "</ul>";
+      } else if (e.etape === "conflits") {
+        if (e.session && etat.mcp) gestes += '<button type="button" class="act k-task" data-sid="' + esc(e.session) + '"' + (e.copier ? ' data-copier="' + esc(e.copier) + '"' : "") +
+          ' title="Ouvre la session où faire ce relevé">Vérifier ↗</button>';
+      } else if (e.copier) {
+        var copie = etat.etapesCopiees[e.cle];
+        gestes += '<button type="button" class="act k-task" data-etape-copier="' + esc(e.copier) + '" data-etape="' + esc(e.cle) + '" title="Copie « ' + esc(e.copier) + ' », à coller dans une nouvelle session (Cmd+N)">' +
+          (copie ? "Copié : colle-le dans une nouvelle session (Cmd+N)" : "Mettre en route") + "</button>";
+      }
+      if (etat.clore && etat.mcp && e.etape !== "conflits-groupe") gestes += '<button type="button" class="fait" data-clore="' + esc(e.cle) + '" title="Retirer cette étape pour de bon">Pas pour moi</button>';
+      var id = e.etape === "conflits" || e.etape === "conflits-groupe" ? "etape-" + e.cle : e.cle;
+      return '<li id="' + esc(id) + '"><span class="quoi">' + esc(e.titre) + (e.cout ? ' <span class="cout">· ' + esc(e.cout) + "</span>" : "") + "</span>" +
+        '<span class="gestes">' + gestes + "</span>" +
+        '<span class="plus">' + (e.note ? "<strong>" + esc(e.note) + "</strong> " : "") + esc(e.detail || "") + liste + "</span></li>";
+    }).join("");
+  }
+  // « Pas pour moi » on the grouped line: each Studio's check is set aside, one « clore » each.
+  async function ecarterGroupe(bouton) {
+    var cles = (bouton.getAttribute("data-ecarter-groupe") || "").split(" ").filter(function (c) { return /^[0-9a-f]{12}$/.test(c) && !etat.closes[c]; });
+    if (!etat.mcp || !etat.clore || !cles.length) return;
+    bouton.disabled = true;
+    for (var i = 0; i < cles.length; i++) {
+      try { await etat.mcp.callTool(SERVEUR, "clore", { cle: cles[i] }, { cache: false }); etat.closes[cles[i]] = 1; }
+      catch (err) { alerte("Relevés non retirés" + (err && err.message ? " : " + err.message : "") + "."); break; }
+    }
+    if (etat.donnees) rendre();
+    try { await etat.mcp.invalidate(SERVEUR, "lignes"); } catch (x) {}
+  }
+  async function copierEtape(bouton) {
+    var texte = bouton.getAttribute("data-etape-copier"), cle = bouton.getAttribute("data-etape");
+    copier(texte);
+    // The connector's copy (pbcopy) too: the page's clipboard may be refused inside the app.
+    if (etat.mcp) { try { await etat.mcp.callTool(SERVEUR, "ouvrir", { copier: texte }, { cache: false }); } catch (x) {} }
+    etat.etapesCopiees[cle] = Date.now();
+    if (etat.donnees) rendre();
+  }
+  function voirEtape(etape) {
+    etat.onglet = "tableau";
+    if (etat.donnees) { rendre(); rendreMatin(etat.donnees.matin); }
+    var li = $(etape);
+    if (li && li.scrollIntoView) li.scrollIntoView({ block: "center" });
+  }
+
+  // La vue d'un seul projet : ses lignes, ses sujets, ses attentes de tiers et son journal, rien d'un autre projet
+  // (outil « projet » du connecteur, calculé sur le Mac). Le reste de la page se cache tant qu'elle est ouverte.
+  function rendreProjet(rang, entete) {
+    var v = etat.projet ? etat.vue : null, ouvert = !!etat.projet;
+    HORS_PROJET.forEach(function (id) {
+      $(id).style.display = ouvert ? "none" : "";
+    });
+    $("bloc-projet").hidden = !ouvert;
+    if (!ouvert) return;
+    if (!v) { $("projet-nom").textContent = "Projet…"; $("projet-questions").innerHTML = '<p class="empty">Lecture du projet…</p>'; return; }
+    rendreConflits(v.conflits);
+    if (v.introuvable) { $("projet-nom").textContent = (FIXE ? document.title : String(etat.projet).replace(/\/+$/, "").split("/").pop()) || "Projet"; $("projet-questions").innerHTML = '<p class="empty">Rien de ce projet dans tes sessions pour l’instant. Les lignes arrivent quand tu travailles dans le dossier du Studio, ou quand l’ingestion automatique y range une demande pour toi.</p>'; $("projet-sujets").innerHTML = ""; $("projet-journal").innerHTML = ""; $("projet-bloc-tiers").hidden = true; return; }
+    $("projet-nom").textContent = v.nom;
+    if (FIXE) nommerPage(v.nom);
+    // Même tri que la page : en tête « En un clic », puis les questions, puis « Anciennes », repliées.
+    var enBande = function (l) { return autorisationVivante(l) || unClic(l); };
+    // Les demandes de l'ingestion de ce projet, que le tableau principal (caché ici) porte ailleurs : en tête.
+    // Same folder whether written composed or decomposed (« partagés »): the app and projets.json differ.
+    var nfc = function (s) { return String(s || "").normalize("NFC"); };
+    var dem = demandes(etat.donnees), duProjet = function (l) { return nfc(l.projet) === nfc(etat.projet); };
+    var questions = (v.questions || []).filter(pasRetiree);
+    var bande = questions.filter(enBande), q = dem.fraiches.filter(duProjet).concat(questions.filter(function (l) { return !enBande(l); }).map(horsBande));
+    var remontees = remonterAnciennes(bande.length + q.length, dem.anciennes.filter(duProjet).concat((v.anciennes || []).filter(pasRetiree)));
+    var vieilles = remontees.reste;
+    q = q.concat(remontees.haut);
+    // The dot on « Projet »: the lines of this view that appeared since the last opening (none the first time).
+    var nouvelles = etat.vuAvant ? bande.concat(q).filter(function (l) { return l.depuis > etat.vuAvant; }).length : 0;
+    $("projet-onglet-projet").innerHTML = "Projet" + (nouvelles ? ' <span class="pastille">' + nouvelles + "</span>" : "");
+    $("projet-onglet-projet").setAttribute("aria-label", nouvelles ? "Projet · " + nouvelles + (nouvelles > 1 ? " nouvelles lignes" : " nouvelle ligne") + " depuis ta dernière visite" : "Projet");
+    var table = function (ls) { return entete + ls.map(function (l, i) { return rang(l, i === 0, false); }).join("") + "</tbody></table>"; };
+    $("projet-questions").innerHTML = (bande.length ? '<div class="bande"><h3>En un clic (' + bande.length + ")</h3>" + table(bande) + "</div>" : "") +
+      (q.length ? table(q) : bande.length ? "" : '<p class="empty">Rien ne t\'attend sur ce projet.</p>') +
+      (vieilles.length ? '<h3><button type="button" class="replier" id="projet-anciennes-bascule" aria-expanded="' + etat.anciennesOuvertes + '"><span class="fleche">▸</span>Anciennes · ' + vieilles.length + "</button></h3>" +
+        (etat.anciennesOuvertes ? table(vieilles) : "") : "");
+    // The project's « Fils rouges » (PM, 2026-11-17): off the main board, here only, unfolded under the questions; one
+    // row per session, the most recently active first. They take the place of « Sujets », which nobody used.
+    var fils = ((etat.donnees && etat.donnees.fils_rouges) || []).filter(function (b) { return nfc(b.studio) === nfc(v.nom); })
+      .reduce(function (t, b) { return t.concat(b.sessions || []); }, [])
+      .sort(function (a, b) { return (b.derniere || 0) - (a.derniere || 0); });
+    var plis = [["sujets", etat.sujetsOuverts, fils.length], ["journal", etat.journalOuvert, (v.journal || []).length]];
+    plis.forEach(function (x) {
+      $("projet-" + x[0]).style.display = x[1] ? "" : "none";
+      $("projet-" + x[0] + "-bascule").setAttribute("aria-expanded", String(x[1]));
+      $("projet-" + x[0] + "-n").textContent = x[2] ? "· " + x[2] : "";
+    });
+    $("projet-sujets").innerHTML = fils.length ? '<div class="boite"><table class="fils-rouges"><tbody>' + fils.map(function (f) {
+      var sid = etat.mcp ? f.sessionId : "";
+      return '<tr><td class="titre">' + (f.non_lue ? '<span class="non-lue" title="non lue"></span>' : "") + esc(f.titre) + "</td>" +
+        '<td class="quand">' + (f.derniere ? '<span class="elapsed" title="' + esc(dateCourte(f.derniere)) + '">' + ecoule(Date.now() - f.derniere) + "</span>" : "") + "</td>" +
+        '<td class="agir">' + (sid ? '<button type="button" class="act k-task" data-sid="' + esc(sid) + '" title="Ouvrir ce fil rouge">Ouvrir ↗</button>' : "") + "</td></tr>";
+    }).join("") + "</tbody></table></div>" : '<p class="empty">Aucun fil rouge pour ce projet.</p>';
+    // « Reçu » (PM, 2026-11-17): the same gesture as « Fait / Retirer du tableau », for a wait the ingestion did not close.
+    var tiers = (v.tiers || []).filter(function (x) { return !x.cle || !etat.closes[x.cle]; });
+    $("projet-bloc-tiers").hidden = !tiers.length;
+    $("projet-tiers").innerHTML = tiers.length ? "<table><tbody>" + tiers.map(function (x) {
+      var geste = x.cle && etat.clore && etat.mcp ? (etat.retraits[x.cle]
+        ? '<button type="button" class="aller" data-annuler="' + esc(x.cle) + '" title="10 secondes pour annuler">Annuler</button>'
+        : '<button type="button" class="fait" data-retirer="' + esc(x.cle) + '" title="Reçu : l\'attente quitte la page (10 secondes pour annuler)">Reçu</button>') : "";
+      return '<tr' + (x.cle && etat.retraits[x.cle] ? ' class="retiree"' : "") + '><td class="session">' + esc(x.session) + '</td><td class="action">' + md(x.texte) + (x.detail ? ' <span class="suite">: ' + md(x.detail) + "</span>" : "") +
+        '</td><td class="quand"><span class="elapsed" title="' + esc(dateCourte(x.depuis)) + '">' + ecoule(Date.now() - x.depuis) + "</span></td><td class=\"type\">" + geste + "</td></tr>";
+    }).join("") + "</tbody></table>" : "";
+    var j = v.journal || [];
+    $("projet-journal").innerHTML = j.length ? '<ul class="journal">' + j.map(function (x) {
+      return '<li><span class="quand">' + esc(dateCourte(x.depuis)) + "</span><strong>" + esc(x.session) + "</strong> · " + md(x.texte) + "</li>";
+    }).join("") + "</ul>" : '<p class="empty">Rien au journal.</p>';
+  }
+  // L'onglet « Conflits » d'un projet : les cas ouverts du registre du Studio (projet/conflits.md), en lecture seule, et
+  // le bouton qui ouvre la session « <Projet> · Conflits Studio » où le PM les tranche. Aucun bouton de réponse ici.
+  function ouvrirConflits(c) { return c && Array.isArray(c.ouverts) ? c.ouverts : []; }
+  // « Préparer l'aperçu » (PM, Q18, 2026-11-15) : un Studio jamais vérifié, sans aperçu prêt. Le relevé et le jugement
+  // tournent dans la session des conflits, sur go du coût ; le PM revient valider quand il veut. Même chemin que les
+  // autres boutons : la session s'ouvre, le texte est copié.
+  function boutonPreparerConflits(c) {
+    var sid = c.session && c.session.sessionId ? c.session.sessionId : c.session_studio;
+    if (!sid || !etat.mcp || c.verification !== "jamais" || (c.premiere && c.premiere.pret)) return "";
+    return ' <button type="button" class="voir" data-sid="' + esc(sid) + '" data-copier="/cockpit:conflits préparer" title="Ouvre la session, texte copié : colle-le, l\'aperçu se prépare sans rien te demander d\'autre que le coût">Préparer l\'aperçu ↗</button>';
+  }
+  function boutonSessionConflits(c) {
+    return boutonSessionConflitsSeul(c) + boutonPreparerConflits(c);
+  }
+  function boutonSessionConflitsSeul(c) {
+    if (c.session && c.session.sessionId) {
+      return etat.mcp ? '<button type="button" class="aller" data-sid="' + esc(c.session.sessionId) + '" title="Ouvrir cette session">Ouvrir « ' + esc(c.session.titre) + " » ↗</button>"
+        : "Session « " + esc(c.session.titre) + " »";
+    }
+    if (c.session_studio && etat.mcp && c.verification === "jamais") {
+      return '<button type="button" class="aller" data-sid="' + esc(c.session_studio) + '" data-copier="/cockpit:conflits rattrapage" title="Ouvre la session la plus récente du Studio, texte copié : colle-le, elle crée la session des conflits">Vérifier ce Studio ↗</button>';
+    }
+    return "Pas encore de session « " + esc(c.titre_session) + " ». Pour la créer : ouvre une session dans le dossier du Studio et lance <code>" + esc(c.commande || "/cockpit:conflits") + "</code>.";
+  }
+  function valeurConflit(nom, x) {
+    return '<div class="valeur">' + nom + " : <strong>" + esc(x.texte) + "</strong> (" + esc(x.source) + ", " + esc(x.date) + ")</div>";
+  }
+  // The date of the last complete pass, and what became of the re-read since (2026-11-17) : « Studio à jour » only when
+  // a re-read found nothing or was judged whole (c.relecture.a_jour) ; skipped, too large or never run, the tab says so
+  // with its reason. Without `relecture` (an older connector), the date alone, never « à jour ».
+  function jjmm(d) { return String(d || "").slice(0, 5); }
+  function enteteConflits(c, n) {
+    if (!c || c.lu === false || !c.dernier_passage) return "";
+    var r = c.relecture || null, quand = jjmm(c.dernier_passage);
+    var tete = n ? "Vérifié le " + esc(quand) + " · " + n + (n > 1 ? " conflits à trancher" : " conflit à trancher")
+      : r && r.a_jour ? "Studio à jour"
+      : "Dernier passage complet le " + esc(quand);
+    return '<p class="pour-info"><strong>' + tete + "</strong>" + (r && r.texte ? " · " + esc(r.texte) : "") + "</p>";
+  }
+  // The journal of the register: what was settled, when, by whom (the PM's own words when kept). No code.
+  var CHOIX_LISIBLE = { "remplacer": "remplacé", "à confirmer avec le client": "à confirmer avec le client", "simple discussion": "gardé tel quel" };
+  function journalConflits(c) {
+    var j = (c && c.journal) || [];
+    if (!j.length) return "";
+    return "<h3>Tranché</h3>" + '<ul class="conflits">' + j.map(function (x) {
+      return "<li><strong>" + esc(x.sujet) + "</strong>" + '<div class="valeur">' + esc(CHOIX_LISIBLE[x.choix] || x.choix) + ", le " + esc(jjmm(x.date)) + " par " + esc(x.par) +
+        (x.reprise ? " (tranché à la main, repris)" : "") + "</div>" + (x.reponse ? '<div class="valeur">' + esc(x.reponse) + "</div>" : "") + "</li>";
+    }).join("") + "</ul>" + (c.tranches > j.length ? '<p class="pour-info">Et ' + (c.tranches - j.length) + " plus anciens, dans le registre des conflits du Studio.</p>" : "");
+  }
+  function rendreConflits(c) {
+    var cas = ouvrirConflits(c), n = cas.length, conflits = etat.ongletProjet === "conflits";
+    // The dot counts the new cases, not shown to the PM yet in the conflicts session (PM, 2026-11-10).
+    var nv = c && c.nouveaux ? c.nouveaux : 0;
+    $("projet-onglet-conflits").innerHTML = "Conflits" + (nv ? ' <span class="pastille">' + nv + "</span>" : "");
+    $("projet-onglet-conflits").setAttribute("aria-label", nv ? "Conflits · " + nv + (nv > 1 ? " nouveaux" : " nouveau") + ", " + n + " ouverts" : n ? "Conflits · " + n + " ouverts" : "Conflits");
+    $("projet-onglet-projet").setAttribute("aria-selected", String(!conflits));
+    $("projet-onglet-conflits").setAttribute("aria-selected", String(conflits));
+    $("projet-onglet-projet").setAttribute("tabindex", conflits ? "-1" : "0");
+    $("projet-onglet-conflits").setAttribute("tabindex", conflits ? "0" : "-1");
+    $("projet-principal").hidden = conflits;
+    $("projet-conflits").hidden = !conflits;
+    $("projet-ligne-conflits").hidden = !n;
+    $("projet-ligne-conflits").innerHTML = n ? "<strong>" + n + (n > 1 ? " conflits ouverts" : " conflit ouvert") + "</strong>" +
+      (nv ? " dont " + nv + (nv > 1 ? " nouveaux" : " nouveau") : "") + " dans le registre du Studio" +
+      (c.relance ? " · à relancer : " + esc(c.raison) : "") + " · " + boutonSessionConflits(c) : "";
+    if (!c) { $("projet-conflits").innerHTML = '<p class="empty">Registre des conflits pas encore lu.</p>'; return; }
+    var h = enteteConflits(c, n) + "<p>" + boutonSessionConflits(c) + "</p>";
+    // The connector reads a copy of the register (the Drive refuses it): when the conflicts session worked after that
+    // copy, say so rather than an empty tab (2026-11-18, the first relevé showed 0 case for 19 in the register).
+    if (c.lu !== false && c.en_retard) h += '<p class="pour-info">La session des conflits a travaillé depuis la copie du registre lue à ' + esc(c.copie_le || "") +
+      " : ce qu'elle vient d'inscrire apparaît ici d'ici quelques minutes.</p>";
+    if (c.lu === false) h += '<p class="empty">Le registre des conflits n\'a pas pu être lu : il s\'affiche après le prochain calcul de Mon Studio hors de l\'app.</p>';
+    else if (!n && c.en_retard) h += "";
+    else if (!n && c.verification === "jamais") h += '<p class="empty">' + esc(c.texte_premiere || "Le premier relevé des conflits n'est pas encore fait.") + "</p>";
+    else if (!n && c.dernier_passage && !(c.journal || []).length) h += '<p class="empty">Passage complet du ' + esc(jjmm(c.dernier_passage)) + " : aucun conflit.</p>";
+    else if (!n && !(c.journal || []).length) h += '<p class="empty">Aucun conflit ouvert dans ce Studio.</p>';
+    else h += '<p class="pour-info">Lecture seule : tu tranches dans la session des conflits, une décision à la fois.</p><ul class="conflits">' + cas.map(function (x) {
+      return "<li><strong>" + esc(x.sujet) + "</strong>" + (x.nouveau ? ' <span class="pastille">nouveau</span>' : "") + valeurConflit("Ancienne valeur", x.ancienne) + valeurConflit("Nouvelle valeur", x.nouvelle) +
+        '<div class="valeur">Déjà communiqué au client : <strong>' + (x.communique ? "oui" : "non") + "</strong></div></li>";
+    }).join("") + "</ul>";
+    if (c.illisibles) h += '<p class="pour-info">' + c.illisibles + (c.illisibles > 1 ? " cas illisibles" : " cas illisible") + " dans le registre des conflits du Studio : la session des conflits les montre.</p>";
+    h += journalConflits(c);
+    $("projet-conflits").innerHTML = h;
+  }
+  async function lireProjet() {
+    var dossier = etat.projet;
+    if (!etat.mcp || !dossier) return;
+    try {
+      var r = await etat.mcp.callTool(SERVEUR, "projet", { dossier: dossier }, { cache: false });
+      if (etat.projet === dossier) { etat.vue = r && r.payload; alerte(""); }
+    } catch (err) {
+      if (etat.projet === dossier) alerte("Vue projet indisponible (" + ((err && err.code) || "erreur") + ") : republie la page avec l'outil « projet ».");
+    }
+    rendre();
+  }
+  function nommerPage(nom) {
+    document.title = nom;
+    $("titre-page").textContent = nom;
+    $("sur-titre").textContent = "Projet";
+  }
+  if (FIXE) {
+    nommerPage(FIXE.replace(/\/+$/, "").split("/").pop() || "Projet");
+    $("tous-projets").hidden = true;
+    $("bloc-projet").hidden = false;
+    etat.vuAvant = passagePrecedent(FIXE);
+    $("projet-nom").textContent = "Projet…";
+    HORS_PROJET.forEach(function (id) {
+      $(id).style.display = "none";
+    });
+  }
+  function ouvrirProjet(dossier) {
+    etat.projet = FIXE || dossier || ""; etat.vue = null; etat.onglet = "tableau"; etat.ongletProjet = "projet";
+    etat.vuAvant = etat.projet ? passagePrecedent(etat.projet) : 0;
+    rendre();
+    if (etat.projet) lireProjet();
+  }
+
+  // La liste par projet (projets.py) : un bloc par Studio qui a quelque chose, ses lignes, le bouton qui ouvre sa
+  // session et, si la page a l'outil « clore », « Fait / plus d'actu » qui ferme une ligne qu'aucune source ne voit.
+  // Une question se ferme d'elle-même quand elle a sa réponse : pas de bouton.
+  var GENRES = { a_toi: "à toi de jouer", entree: "entré au Studio", question: "question", reunion: "réunion sans compte rendu", conflits: "conflits à trancher" };
+  function jours(t) {
+    var a = new Date(t), b = new Date(); a.setHours(0, 0, 0, 0); b.setHours(0, 0, 0, 0);
+    var n = Math.round((b - a) / 86400000);
+    return n <= 0 ? "aujourd'hui" : n === 1 ? "depuis hier" : "depuis " + n + " j";
+  }
+  // Une demande, une seule fois sur la page (0.2.17) : les « À toi » et les questions sont au tableau, les entrées dans
+  // Today, les relevés de conflits dans « Mise en route ». Ce bloc ne garde que ce qui n'est nulle part ailleurs : les
+  // réunions sans compte rendu et la relance des conflits.
+  // The meetings without minutes moved to Today (PM, 2026-11-17, the morning stand-up), and « Fermé depuis hier » left:
+  // nothing to do with that figure. Only the reminder of the conflicts stays here.
+  function lignesDuBloc(p) { return (p.lignes || []).filter(function (l) { return l.type === "conflits" && !etat.closes[l.cle]; }); }
+  function rendreProjets(pj) {
+    var liste = (pj && Array.isArray(pj.projets) ? pj.projets : []).filter(function (p) { return lignesDuBloc(p).length; });
+    $("bloc-projets").hidden = !liste.length;
+    $("projets").innerHTML = liste.map(function (p) {
+      var lignes = lignesDuBloc(p);
+      return '<div class="projet"><h3>' + esc(p.nom) + (p.role === "membre" ? ' <span class="membre">tu y es membre</span>' : "") + "</h3>" +
+        (lignes.length ? "<ul>" + lignes.map(function (l) {
+          var sid = etat.mcp ? l.session : "";
+          var aide = l.repli ? "Pas de session 📬 : ouvre la plus récente du Studio" : "Ouvrir la session";
+          var gestes = sid ? '<button type="button" class="act k-task" data-sid="' + esc(sid) + '" title="' + esc(aide) + '">Ouvrir ↗</button>' : "";
+          if (etat.retraits[l.cle]) gestes = '<button type="button" class="aller" data-annuler="' + esc(l.cle) + '" title="10 secondes pour annuler">Annuler</button>';
+          else if (etat.clore && etat.mcp && l.type !== "question" && l.type !== "conflits")
+            gestes += '<button type="button" class="fait" data-retirer="' + esc(l.cle) + '" title="C\'est fait, ou plus d\'actualité : la ligne part (10 secondes pour annuler)">Fait / Retirer du tableau</button>';
+          return '<li><span class="quoi">' + md(l.titre) + ' <span class="genre">· ' + esc(GENRES[l.type] || l.type) + "</span></span>" +
+            '<span class="gestes"><span class="elapsed" title="' + esc(dateCourte(l.depuis)) + '">' + esc(jours(l.depuis)) + "</span>" + gestes + "</span>" +
+            (l.detail ? '<span class="plus">' + md(l.detail) + "</span>" : "") + "</li>";
+        }).join("") + "</ul>" : "") +
+        "</div>";
+    }).join("");
+  }
+  // Le point du matin (matin.py, champ `matin` de « lignes ») : null quand le connecteur est plus ancien ou que sa lecture
+  // a échoué (l'onglet est caché) ; « pas_passe » tant que la tâche planifiée n'a pas écrit celui d'aujourd'hui, sans
+  // jamais montrer celui d'hier. « Fait » passe par « clore » (matin: true) et fait disparaître l'élément pour de bon. Chaque ligne a
+  // un bouton vers sa source : le lien https (libellé d'après son adresse), ou un fichier du Studio, ouvert par le
+  // connecteur (outil « ouvrir » avec dossier et fichier).
+  var JOUR = { lourde: "Journée lourde", normale: "Journée normale", ouverte: "Journée ouverte" };
+  var SOURCE_MATIN = { gmail: "Gmail", slack: "Slack", agenda: "Agenda", studio: "Fichier" };
+  function libelleLien(u, source) {
+    if (/^https:\/\/([a-z0-9-]+\.)*slack\.com\//i.test(u)) return "Slack";
+    if (/^https:\/\/mail\.google\.com\//i.test(u)) return "Gmail";
+    if (/^https:\/\/(calendar\.google\.com|www\.google\.com\/calendar)\//i.test(u)) return "Agenda";
+    if (/^https:\/\/(drive|docs)\.google\.com\//i.test(u)) return "Drive";
+    return SOURCE_MATIN[source] && source !== "studio" ? SOURCE_MATIN[source] : "Source";
+  }
+  function boutonSource(x) {
+    var u = (x && x.lien) || "";
+    if (/^https:\/\//.test(u)) {
+      return '<a class="act" href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + esc(libelleLien(u, x.source)) + " ↗</a>";
+    }
+    if (u && x.dossier && etat.mcp) {
+      return '<button type="button" class="act k-task" data-fichier="' + esc(u) + '" data-dossier="' + esc(x.dossier) + '" title="' + esc(u) + '">Fichier ↗</button>';
+    }
+    return "";
+  }
+  // « Fait » : the one button of Today that says « done, forget it » when no source sees it (PM, 2026-11-09), the same
+  // word on every rubric that asks for a gesture (à traiter, nouvelles demandes, entrées, préparer demain, brouillons).
+  // data-matin-fait: an item of matin.json (« clore » with matin: true); data-clore: a line of the list by project
+  // (« clore »). Either way the item does not come back, neither at the next computation nor the next morning.
+  var FAIT = "Fait", FAIT_AIDE = "C'est fait : ne plus l'afficher";
+  // An entry « Pour info » is seen, not done (PM, 2026-11-17).
+  function boutonVu(cle) {
+    return etat.clore && etat.mcp ? '<button type="button" class="fait" data-clore="' + esc(cle) + '" title="Vu : ne plus l\'afficher">Vu</button>' : "";
+  }
+  function boutonFait(attr, cle) {
+    return etat.clore && etat.mcp ? '<button type="button" class="fait" ' + attr + '="' + esc(cle) + '" title="' + FAIT_AIDE + '">' + FAIT + "</button>" : "";
+  }
+  function aTraiterOuverts(m) {
+    return m && m.etat === "ok" ? (m.a_traiter || []).filter(function (x) { return !etat.matinFaits[x.cle]; }) : [];
+  }
+  // Les nouvelles demandes de l'ingestion, calculées en direct par le connecteur (même pas encore de point du jour).
+  function demandesOuvertes(m) {
+    return m ? (m.demandes || []).filter(function (x) { return !etat.closes[x.cle]; }) : [];
+  }
+  // Les deux onglets : cachés sans point du matin du connecteur. « Today », discret, porte le nombre d'éléments à traiter.
+  function rendreOnglets(m) {
+    var cg = !FIXE && !etat.projet && etat.donnees && Array.isArray(etat.donnees.conflits) ? etat.donnees.conflits : null;
+    if (FIXE || (!m && etat.onglet === "matin") || (!cg && etat.onglet === "conflits")) etat.onglet = "tableau";
+    if (FIXE || etat.projet) m = null;
+    $("onglets").hidden = !m && !cg;
+    $("onglet-matin").hidden = !m;
+    // Hidden while no Studio has a case to show (PM, 2026-11-17): an empty tab is one more place to look at.
+    if (cg && !cg.length) { cg = null; if (etat.onglet === "conflits") etat.onglet = "tableau"; }
+    $("onglets").hidden = !m && !cg;
+    $("onglet-conflits").hidden = !cg;
+    var vueConflits = etat.onglet === "conflits";
+    $("onglet-conflits").setAttribute("aria-selected", String(vueConflits));
+    $("onglet-conflits").setAttribute("tabindex", vueConflits ? "0" : "-1");
+    rendreConflitsGlobal(cg, vueConflits);
+    var n = aTraiterOuverts(m).length, matin = etat.onglet === "matin";   // the board's requests are counted there
+    $("onglet-matin").innerHTML = "Today" + (n ? ' <span class="pastille">' + n + "</span>" : "");
+    $("onglet-matin").setAttribute("aria-label", n ? "Today · " + n + " à traiter" : "Today");
+    $("onglet-tableau").setAttribute("aria-selected", String(!matin && !vueConflits));
+    $("onglet-matin").setAttribute("aria-selected", String(matin));
+    $("onglet-tableau").setAttribute("tabindex", matin || vueConflits ? "-1" : "0");
+    $("onglet-matin").setAttribute("tabindex", matin ? "0" : "-1");
+    $("vue-tableau").hidden = matin || vueConflits;
+    $("bloc-matin").hidden = !m || !matin;
+  }
+  // L'onglet « Conflits » de la vue globale : un bloc par Studio qui a des conflits ouverts, en lecture seule. La
+  // pastille de l'onglet compte les nouveaux, pas encore montrés au PM dans la session des conflits ; la relance
+  // (10 cas ou 14 jours sans traitement, réglables par projet) est aussi une ligne de « Ce qui t'attend ». Ni Slack ni
+  // mail : tout se tranche dans la session « <Projet> · Conflits Studio ».
+  function rendreConflitsGlobal(cg, visible) {
+    var liste = cg || [], nouveaux = liste.reduce(function (s, x) { return s + (x.nouveaux || 0); }, 0);
+    $("onglet-conflits").innerHTML = "Conflits" + (nouveaux ? ' <span class="pastille">' + nouveaux + "</span>" : "");
+    $("onglet-conflits").setAttribute("aria-label", nouveaux ? "Conflits · " + nouveaux + (nouveaux > 1 ? " nouveaux" : " nouveau") : "Conflits");
+    $("bloc-conflits").hidden = !visible;
+    if (!visible) return;
+    $("bloc-conflits").innerHTML = liste.length ? '<ul class="conflits">' + liste.map(function (x) {
+      var compte = x.ouverts + (x.ouverts > 1 ? " conflits ouverts" : " conflit ouvert") +
+        (x.nouveaux ? " · <strong>" + x.nouveaux + (x.nouveaux > 1 ? " nouveaux" : " nouveau") + "</strong>" : "") +
+        (x.a_traiter && x.a_traiter.evident ? " · " + x.a_traiter.evident + (x.a_traiter.evident > 1 ? " évidents, validés d'un coup" : " évident, validé d'un coup") : "");
+      return "<li><strong>" + esc(x.nom) + "</strong>" + '<div class="valeur">' + compte + "</div>" +
+        (x.relance ? '<div class="valeur">À relancer : <strong>' + esc(x.raison) + "</strong></div>" : "") +
+        (x.illisibles ? '<div class="valeur">' + x.illisibles + (x.illisibles > 1 ? " cas illisibles" : " cas illisible") + "</div>" : "") +
+        '<div class="valeur">' + boutonSessionConflits(x) + "</div></li>";
+    }).join("") + "</ul>" : '<p class="empty">Aucun conflit ouvert dans les Studios déjà vérifiés. Un Studio jamais vérifié a sa ligne « Vérifier les conflits » dans « Mise en route », en tête du tableau.</p>';
+  }
+  function choisirOnglet(o, focus) {
+    etat.onglet = o === "matin" || o === "conflits" ? o : "tableau";
+    rendreMatin(etat.donnees && etat.donnees.matin);
+    if (focus) { var b = $("onglet-" + etat.onglet); if (b && b.focus) b.focus(); }
+  }
+  function dateJour(e) { var t = jourEcheance(e); return t === null ? e : new Date(t).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }); }
+  // La partie ingestion de l'onglet, lue en direct : les nouvelles demandes « À toi de jouer » depuis le dernier jour
+  // ouvré sont des lignes du tableau. Une demande s'affiche une fois (0.2.17) : ici, leur nombre et le chemin du
+  // tableau, hors de la pastille de l'onglet.
+  // Today does not copy the board's requests any more (PM, 2026-11-17: the board already does): nothing here.
+  function rendreDemandes(m) { return ""; }
+  // The morning stand-up (PM, 2026-11-17): what waits for each meeting of the day, what the PM waits for from others
+  // (« Sans réponse »), the meetings without minutes (brought from the « Projets » block).
+  function nomProche(a, b) { var n = function (s) { return String(s || "").normalize("NFC").trim().toLowerCase(); }; return !!n(a) && n(a) === n(b); }
+  function ouvertesDuProjet(nom) {
+    var d = etat.donnees;
+    if (!d || !nom) return 0;
+    var base = function (x) { return String(x || "").replace(/\/+$/, "").split("/").pop(); };
+    var duProjet = function (l) { return nomProche(l.studio, nom) || nomProche(base(l.projet), nom); };
+    return (d.lignes || []).filter(pasRetiree).filter(duProjet).length + demandes(d).fraiches.filter(duProjet).length;
+  }
+  function attenteReunion(a) {
+    var n = ouvertesDuProjet(a.projet);
+    return n ? ' <span class="pour-reunion">' + n + (n > 1 ? " questions ouvertes" : " question ouverte") + "</span>" : "";
+  }
+  function rendreSansReponse(m) {
+    var liste = ((m && m.sans_reponse) || []).filter(function (x) { return !x.cle || (!etat.closes[x.cle] && !etat.matinFaits[x.cle]); });
+    if (!liste.length) return "";
+    return '<h3>Sans réponse</h3><p class="pour-info">Ce que tu attends des autres depuis plus de 2 jours ouvrés : à relancer.</p><ul class="liste">' + liste.map(function (x) {
+      var gestes = boutonSource(x) + (x.session && etat.mcp ? '<button type="button" class="act k-task ouvrir" data-sid="' + esc(x.session) + '" title="La session qui attend">Ouvrir ↗</button>' : "") +
+        (x.cle && /^t[0-9a-f]{12}$/.test(x.cle) && etat.clore && etat.mcp ? '<button type="button" class="fait" data-retirer="' + esc(x.cle) + '" title="Reçu : ne plus l\'afficher">Reçu</button>' :
+          x.cle && x.matin ? boutonFait("data-matin-fait", x.cle) : "");
+      var plus = [x.qui ? "attendu de " + x.qui : "", x.depuis ? jours(x.depuis) : ""].filter(Boolean).join(" · ");
+      return '<li><span class="quoi">' + esc(x.titre) + (x.projet ? ' <span class="source">· ' + esc(x.projet) + "</span>" : "") + "</span>" +
+        '<span class="gestes">' + gestes + "</span>" + (plus ? '<span class="plus">' + esc(plus) + "</span>" : "") + "</li>";
+    }).join("") + "</ul>";
+  }
+  function rendreSansCompteRendu() {
+    var pj = etat.donnees && etat.donnees.liste_projets, items = [];
+    ((pj && pj.projets) || []).forEach(function (p) {
+      (p.lignes || []).forEach(function (l) { if (l.type === "reunion" && !etat.closes[l.cle]) items.push({ p: p, l: l }); });
+    });
+    if (!items.length) return "";
+    return '<h3>Réunions sans compte rendu</h3><ul class="liste">' + items.map(function (x) {
+      var l = x.l, sid = etat.mcp ? l.session : "";
+      var gestes = sid ? '<button type="button" class="act k-task ouvrir" data-sid="' + esc(sid) + '" title="Ouvrir la session du Studio">Ouvrir ↗</button>' : "";
+      if (etat.retraits[l.cle]) gestes = '<button type="button" class="aller" data-annuler="' + esc(l.cle) + '" title="10 secondes pour annuler">Annuler</button>';
+      else if (etat.clore && etat.mcp) gestes += '<button type="button" class="fait" data-retirer="' + esc(l.cle) + '" title="' + FAIT_AIDE + ' (10 secondes pour annuler)">' + FAIT + '</button>';
+      return '<li><span class="quoi">' + md(l.titre) + ' <span class="source">· ' + esc(x.p.nom) + "</span></span>" +
+        '<span class="gestes"><span class="elapsed" title="' + esc(dateCourte(l.depuis)) + '">' + esc(jours(l.depuis)) + "</span>" + gestes + "</span>" +
+        (l.detail ? '<span class="plus">' + md(l.detail) + "</span>" : "") + "</li>";
+    }).join("") + "</ul>";
+  }
+  // « Pour info : ce qui est entré au Studio » : ce qui est arrivé sur ses projets sans lui,
+  // et quoi en faire en deux clics au plus. Groupé par projet (« Tout vu »), une ligne courte par entrée (titre,
+  // origine), le détail au clic sur la ligne, un seul bouton : la tâche qu'elle a créée, sinon sa source (lien https),
+  // sinon le fichier du Studio déplié dans la page (« Lire », outil « lire »), sinon la session du Studio. « Fait » la
+  // cache pour de bon (outil « clore »), « Tout vu » tout le groupe.
+  var ENTREES_TITRE = "Pour info : ce qui est entré au Studio";
+  var ENTREES_SOUS = "Pour info. Ce qui te demande un geste est dans le tableau.";
+  var SURLIGNE_MS = 2500;
+  function entreesOuvertes(m) { return ((m && m.entre_studio) || []).filter(function (x) { return !etat.closes[x.cle]; }); }
+  function demandeOuverte(cle) {
+    var pj = etat.donnees && etat.donnees.liste_projets;
+    return !etat.closes[cle] && ((pj && pj.projets) || []).some(function (p) {
+      return (p.lignes || []).some(function (l) { return l.type === "a_toi" && l.cle === cle; });
+    });
+  }
+  function boutonEntree(x) {
+    if (x.tache && demandeOuverte(x.tache)) return '<button type="button" class="act k-task" data-voir-tache="' + esc(x.tache) + '" title="La demande que cette entrée a créée, dans le tableau">Voir la tâche</button>';
+    if (/^https:\/\//.test(x.lien || "")) return boutonSource(x);
+    if (fichierTexte(x.lien) && x.dossier && etat.mcp && etat.lire) {
+      return '<button type="button" class="act k-task" data-lire="' + esc(x.cle) + '" aria-expanded="' + !!etat.lus[x.cle] + '" title="' + esc(x.lien) + '">' + (etat.lus[x.cle] ? "Replier" : "Lire") + "</button>";
+    }
+    if (x.lien && !fichierTexte(x.lien)) return boutonSource(x);
+    if (x.session && etat.mcp) return '<button type="button" class="act k-task" data-sid="' + esc(x.session) + '" title="Ouvrir la session du Studio">Ouvrir ↗</button>';
+    return "";
+  }
+  // Le contenu d'un fichier, échappé, avec une mise en forme Markdown minimale : titres, listes, gras, code,
+  // paragraphes. Jamais de HTML brut : tout est échappé avant la mise en forme.
+  function enLigne(s) { return esc(s).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/`([^`]+)`/g, "<code>$1</code>"); }
+  function markdownSimple(texte) {
+    var html = "", liste = null, para = [], code = null;
+    function fermer() {
+      if (para.length) { html += "<p>" + para.map(enLigne).join("<br>") + "</p>"; para = []; }
+      if (liste) { html += "</" + liste + ">"; liste = null; }
+    }
+    String(texte || "").split("\n").forEach(function (ligne) {
+      if (/^\s*(```|~~~)/.test(ligne)) {
+        if (code === null) { fermer(); code = []; } else { html += "<pre>" + esc(code.join("\n")) + "</pre>"; code = null; }
+        return;
+      }
+      if (code !== null) { code.push(ligne); return; }
+      var t = /^\s{0,3}(#{1,6})\s+(.*)$/.exec(ligne), puce = /^\s*[-*+]\s+(.*)$/.exec(ligne), num = /^\s*\d{1,3}[.)]\s+(.*)$/.exec(ligne);
+      if (!ligne.trim()) { fermer(); return; }
+      if (t) { fermer(); html += "<h4>" + enLigne(t[2]) + "</h4>"; return; }
+      if (puce || num) {
+        var genre = puce ? "ul" : "ol";
+        if (para.length) { html += "<p>" + para.map(enLigne).join("<br>") + "</p>"; para = []; }
+        if (liste !== genre) { if (liste) html += "</" + liste + ">"; html += "<" + genre + ">"; liste = genre; }
+        html += "<li>" + enLigne((puce || num)[1]) + "</li>";
+        return;
+      }
+      if (liste) { html += "</" + liste + ">"; liste = null; }
+      para.push(ligne.trim());
+    });
+    if (code !== null) html += "<pre>" + esc(code.join("\n")) + "</pre>";
+    fermer();
+    return html;
+  }
+  function rendreLu(x) {
+    var l = etat.lus[x.cle];
+    if (!l) return "";
+    if (l.etat === "lecture") return '<div class="lu">Lecture du fichier…</div>';
+    if (l.etat === "erreur") return '<div class="lu">Fichier illisible depuis la page : ' + esc(l.message || "erreur") + ".</div>";
+    return '<div class="lu">' + markdownSimple(l.texte) + (l.tronque ? "<p><em>Fichier long : seul le début est affiché.</em></p>" : "") + "</div>";
+  }
+  function rendreEntrees(m) {
+    var groupes = [], parProjet = {};
+    entreesOuvertes(m).forEach(function (x) {
+      if (!(x.projet in parProjet)) { parProjet[x.projet] = { projet: x.projet, items: [] }; groupes.push(parProjet[x.projet]); }
+      parProjet[x.projet].items.push(x);
+    });
+    if (!groupes.length) return "";
+    var vu = etat.clore && etat.mcp;
+    return "<h3>" + ENTREES_TITRE + '</h3><p class="pour-info">' + ENTREES_SOUS + "</p>" + groupes.map(function (g) {
+      return '<div class="groupe-entrees"><div class="tete-groupe">' + esc(g.projet) + ' <span class="n">· ' + g.items.length + "</span>" +
+        (vu ? '<button type="button" class="fait" data-tout-vu="' + esc(g.projet) + '" title="Ne plus afficher ces entrées">Tout vu</button>' : "") +
+        '</div><ul class="liste">' + g.items.map(function (x) {
+          var ouvert = !!etat.entreOuverts[x.cle], titre = x.titre || x.phrase || "";
+          return '<li class="entree"><span class="quoi" data-entre="' + esc(x.cle) + '" role="button" tabindex="0" aria-expanded="' + ouvert + '"><span class="titre">' + esc(titre) + "</span>" +
+            (x.origine ? ' <span class="source">· ' + esc(x.origine) + "</span>" : "") + "</span>" +
+            '<span class="gestes">' + boutonEntree(x) + boutonVu(x.cle) + "</span>" +
+            (ouvert ? '<span class="plus">' + esc(x.detail || x.phrase || "") + "</span>" : "") + rendreLu(x) + "</li>";
+        }).join("") + "</ul></div>";
+    }).join("");
+  }
+  async function lireEntree(cle) {
+    var m = etat.donnees && etat.donnees.matin, x = entreesOuvertes(m).filter(function (e) { return e.cle === cle; })[0];
+    if (!x || !etat.mcp) return;
+    if (etat.lus[cle]) { delete etat.lus[cle]; rendreMatin(m); return; }
+    etat.lus[cle] = { etat: "lecture" }; rendreMatin(m);
+    try {
+      var r = await etat.mcp.callTool(SERVEUR, "lire", { dossier: x.dossier, fichier: x.lien }, { cache: false });
+      var p = (r && r.payload) || {};
+      etat.lus[cle] = { etat: "ok", texte: p.texte || "", tronque: !!p.tronque };
+    } catch (err) {
+      var c = err && err.code;
+      if (c === "not_in_manifest") etat.lire = false;
+      etat.lus[cle] = { etat: "erreur", message: c === "cancelled" ? "refusé dans l'app" : (err && err.message) || c || "erreur" };
+    }
+    if (etat.donnees) rendreMatin(etat.donnees.matin);
+  }
+  // « Lire » on a line of the board: the file unfolds in the line itself, read by the connector (tool « lire »).
+  async function lireFichier(k) {
+    var x = etat.lisibles[k];
+    if (!x || !etat.mcp) return;
+    if (etat.lus[k]) { delete etat.lus[k]; if (etat.donnees) rendre(); return; }
+    if (x.deplier) etat.deplies[x.deplier] = 1;
+    etat.lus[k] = { etat: "lecture" };
+    if (etat.donnees) rendre();
+    try {
+      var r = await etat.mcp.callTool(SERVEUR, "lire", { dossier: x.dossier, fichier: x.fichier }, { cache: false });
+      var p = (r && r.payload) || {};
+      etat.lus[k] = { etat: "ok", texte: p.texte || "", tronque: !!p.tronque };
+    } catch (err) {
+      var c = err && err.code;
+      if (c === "not_in_manifest") etat.lire = false;
+      etat.lus[k] = { etat: "erreur", message: c === "cancelled" ? "refusé dans l'app" : (err && err.message) || c || "erreur" };
+    }
+    if (etat.donnees) rendre();
+  }
+  async function toutVu(projet) {
+    var m = etat.donnees && etat.donnees.matin;
+    if (!etat.mcp || !etat.clore) return;
+    var items = entreesOuvertes(m).filter(function (x) { return x.projet === projet; });
+    for (var i = 0; i < items.length; i++) {
+      try { await etat.mcp.callTool(SERVEUR, "clore", { cle: items[i].cle }, { cache: false }); etat.closes[items[i].cle] = 1; }
+      catch (err) { alerte("Entrées non masquées" + (err && err.message ? " : " + err.message : "") + "."); break; }
+    }
+    if (etat.donnees) rendre();
+    try { await etat.mcp.invalidate(SERVEUR, "lignes"); } catch (x) {}
+  }
+  // « Voir la tâche » : l'onglet Tableau, la ligne de la demande mise en évidence un instant, et amenée à l'écran.
+  function voirTache(cle) {
+    etat.surligne = { cle: cle, t: Date.now() };
+    etat.onglet = "tableau";
+    if (etat.donnees) rendre();
+    var tr = document.querySelector ? document.querySelector('tr[data-demande="' + cle + '"]') : null;
+    if (tr && tr.scrollIntoView) tr.scrollIntoView({ block: "center" });
+    setTimeout(function () { etat.surligne = null; if (etat.donnees) rendre(); }, SURLIGNE_MS + 50);
+  }
+  function rendreMatin(m) {
+    rendreOnglets(m);
+    if (!m) { $("matin").innerHTML = ""; return; }
+    if (m.etat !== "ok") {
+      // Not set up yet: the empty tab sends to the step of « Mise en route » (2026-11-15) rather than promising a point.
+      var vide = matinEnAttente(etat.donnees)
+        ? '<p class="empty">Le point du matin n\'est pas encore en route : c\'est la première étape de « Mise en route », en tête du tableau. ' +
+          '<button type="button" class="aller" data-voir-etape="etape-matin">Voir l\'étape</button></p>'
+        : '<p class="empty">' + esc(m.retard || "Point du matin pas encore passé") + ".</p>";
+      $("matin").innerHTML = vide + rendreSansReponse(m) + rendreSansCompteRendu() + rendreEntrees(m); return;
+    }
+    var aTraiter = aTraiterOuverts(m), nTotal = aTraiter.length;
+    var phrase = (JOUR[m.jour] || JOUR.normale) + " · " + (nTotal ? nTotal + " à traiter" : "rien à traiter");
+    var agenda = m.agenda || [], regle = m.regle || [], demain = (m.preparer_demain || []).filter(function (x) { return !x.cle || !etat.matinFaits[x.cle]; });
+    var h = '<p class="phrase j-' + esc(JOUR[m.jour] ? m.jour : "normale") + '">' + esc(phrase) + "</p>" +
+      (agenda.length ? '<ol class="frise" aria-label="Agenda du jour">' + agenda.map(function (a) {
+        return '<li><span class="h">' + esc(a.heure) + "</span><span>" + esc(a.titre) + (a.projet ? ' <span class="source">· ' + esc(a.projet) + "</span>" + attenteReunion(a) : "") + "</span></li>";
+      }).join("") + "</ol>" : "");
+    if (aTraiter.length) {
+      h += "<h3>À traiter</h3><ul class=\"liste\">" + aTraiter.map(function (x) {
+        var gestes = boutonSource(x) + boutonFait("data-matin-fait", x.cle);
+        return "<li><span class=\"quoi\">" + esc(x.titre) + (x.projet ? ' <span class="source">· ' + esc(x.projet) + "</span>" : "") + "</span>" +
+          '<span class="gestes">' + gestes + "</span>" + (x.phrase ? '<span class="plus">' + esc(x.phrase) + "</span>" : "") + "</li>";
+      }).join("") + "</ul>";
+    }
+    h += rendreSansReponse(m) + rendreSansCompteRendu() + rendreEntrees(m);
+    if (regle.length) {
+      h += '<h3><button type="button" class="replier" id="regle-bascule" aria-expanded="' + etat.reglesOuvert + '"><span class="fleche">▸</span>Réglé · ' + regle.length + "</button></h3>" +
+        (etat.reglesOuvert ? '<ul class="liste regle">' + regle.map(function (r) {
+          return "<li><span class=\"quoi\">" + esc(r.qui) + (r.quand ? " · " + esc(r.quand) : "") + " : " + esc(r.quoi) + '</span><span class="gestes">' + boutonSource(r) + "</span></li>";
+        }).join("") + "</ul>" : "");
+    }
+    if (demain.length) h += '<h3>Préparer demain</h3><ul class="liste demain">' + demain.map(function (d) {
+      return '<li><span class="quoi">' + esc(d.titre) + '</span><span class="gestes">' + boutonSource(d) + (d.cle ? boutonFait("data-matin-fait", d.cle) : "") + "</span>" +
+        (d.phrase ? '<span class="plus">' + esc(d.phrase) + "</span>" : "") + "</li>";
+    }).join("") + "</ul>";
+    h += rendreBrouillons(m);
+    $("matin").innerHTML = h;
+  }
+  // « Brouillons pas envoyés » (Q39, 2026-11-07) : les brouillons qu'une session a posés et que personne n'a envoyés,
+  // vérifiés chaque matin dans Gmail. Seulement ici, en bas de l'onglet, jamais au tableau ni dans le nombre de l'onglet :
+  // un rappel, pas une alerte. Une ligne : « Mail à X : objet », depuis quand, le projet ; « Ouvrir le brouillon ↗ » (son
+  // lien), « Ouvrir la session ↗ » quand elle est connue, « Fait » (outil « clore » avec matin: true, pour de bon).
+  // Un brouillon Slack s'efface seul 3 jours ouvrés après sa création (matin.py, Q42).
+  function brouillonsOuverts(m) {
+    return m && m.etat === "ok" ? (m.brouillons || []).filter(function (x) {
+      return !etat.matinFaits[x.cle] && /^https:\/\//.test(x.lien || "");
+    }) : [];
+  }
+  function rendreBrouillons(m) {
+    var b = brouillonsOuverts(m);
+    if (!b.length) return "";
+    return '<h3 class="discret">Brouillons pas envoyés</h3><ul class="liste brouillons">' + b.map(function (x) {
+      var quoi = (x.outil === "slack" ? "Slack " + (x.destinataire || "") : "Mail" + (x.destinataire ? " à " + x.destinataire : "")) +
+        (x.objet ? " : " + x.objet : "");
+      var plus = [x.depuis ? "depuis le " + dateJour(x.depuis) : "", x.projet || ""].filter(Boolean).join(" · ");
+      var gestes = '<a class="act" href="' + esc(x.lien) + '" target="_blank" rel="noopener noreferrer">Ouvrir le brouillon ↗</a>' +
+        (x.session && etat.mcp ? '<button type="button" class="voir" data-sid="' + esc(x.session) + '" title="La session qui a posé ce brouillon">Ouvrir la session ↗</button>' : "") +
+        boutonFait("data-matin-fait", x.cle);
+      return '<li><span class="quoi">' + esc(quoi) + '</span><span class="gestes">' + gestes + "</span>" +
+        (plus ? '<span class="plus">' + esc(plus) + "</span>" : "") + "</li>";
+    }).join("") + "</ul>";
+  }
+  async function ouvrirFichier(bouton) {
+    var fichier = bouton.getAttribute("data-fichier"), dossier = bouton.getAttribute("data-dossier");
+    if (!etat.mcp || !fichier || !dossier) return;
+    try {
+      await etat.mcp.callTool(SERVEUR, "ouvrir", { dossier: dossier, fichier: fichier }, { cache: false });
+      alerte("");
+    } catch (err) {
+      var c = err && err.code;
+      alerte(c === "cancelled" ? "Fichier non ouvert : refusé dans l'app."
+        : "Fichier non ouvert (" + (c || "erreur") + (err && err.message ? " : " + err.message : "") + ") : " + fichier);
+    }
+  }
+  async function faitMatin(bouton) {
+    var cle = bouton.getAttribute("data-matin-fait");
+    if (!etat.mcp || !etat.clore || !cle || etat.matinFaits[cle]) return;
+    bouton.disabled = true;
+    try {
+      await etat.mcp.callTool(SERVEUR, "clore", { cle: cle, matin: true }, { cache: false });
+      etat.matinFaits[cle] = 1; alerte("");
+    } catch (err) {
+      var c = err && err.code;
+      if (c === "not_in_manifest") etat.clore = false;
+      alerte(c === "cancelled" ? "Élément non marqué : refusé dans l'app." : "Élément non marqué" + (err && err.message ? " : " + err.message : "") + ".");
+    }
+    if (etat.donnees) rendreMatin(etat.donnees.matin);
+    try { await etat.mcp.invalidate(SERVEUR, "lignes"); } catch (x) {}
+  }
+  var CLE_RETRAIT = /^(?:[rt]?[0-9a-f]{12})$/;
+  // abandon: a stopped session's line (« Abandonner »), its session proposed for archiving once the line leaves.
+  function retirer(cle, abandon) {
+    if (!etat.mcp || !etat.clore || !CLE_RETRAIT.test(cle || "") || etat.closes[cle] || etat.retraits[cle]) return;
+    etat.retraits[cle] = { t: Date.now(), abandon: !!abandon, minuteur: setTimeout(function () { confirmerRetrait(cle); }, ANNULER_MS) };
+    if (etat.donnees) rendre();
+  }
+  // « Plus tard »: the connector keeps the line hidden until tomorrow (« clore » with plus_tard), nothing else moves.
+  async function plusTard(cle) {
+    if (!etat.mcp || !etat.clore || !CLE_RETRAIT.test(cle || "")) return;
+    var demain = new Date(); demain.setHours(24, 0, 0, 0);
+    etat.plusTard[cle] = demain.getTime();
+    if (etat.donnees) rendre();
+    try {
+      var r = await etat.mcp.callTool(SERVEUR, "clore", { cle: cle, plus_tard: true }, { cache: false });
+      var p = (r && r.payload) || {};
+      if (p.jusqua) etat.plusTard[cle] = p.jusqua;
+      alerte("");
+    } catch (err) {
+      var c = err && err.code;
+      // An older connector without « plus_tard »: the line stays hidden in this page until tomorrow all the same.
+      if (c === "cancelled") { delete etat.plusTard[cle]; alerte("Ligne non masquée : refusé dans l'app."); if (etat.donnees) rendre(); }
+    }
+    try { await etat.mcp.invalidate(SERVEUR, "lignes"); } catch (x) {}
+  }
+  function annulerRetrait(cle) {
+    var r = etat.retraits[cle];
+    if (!r || r.envoi) return;
+    clearTimeout(r.minuteur);
+    delete etat.retraits[cle];
+    if (etat.donnees) rendre();
+  }
+  async function confirmerRetrait(cle) {
+    var r = etat.retraits[cle];
+    if (!r || r.envoi) return;
+    r.envoi = true; clearTimeout(r.minuteur);
+    try {
+      await etat.mcp.callTool(SERVEUR, "clore", r.abandon ? { cle: cle, abandon: true } : { cle: cle }, { cache: false });
+      etat.closes[cle] = 1; alerte("");
+    } catch (err) {
+      var c = err && err.code;
+      if (c === "not_in_manifest") etat.clore = false;
+      alerte(c === "cancelled" ? "Ligne non retirée : refusé dans l'app." : "Ligne non retirée" + (err && err.message ? " : " + err.message : "") + ".");
+    }
+    delete etat.retraits[cle];
+    if (etat.donnees) rendre();
+    try { await etat.mcp.invalidate(SERVEUR, "lignes"); } catch (x) {}
+  }
+  async function reclasser(valeur) {
+    var m = /^(dabord|ensuite|annuler)\|(r?[0-9a-f]{12})$/.exec(valeur || "");
+    if (!m || !etat.mcp || !etat.clore || !reclassementAllume()) return;
+    var cle = m[2], avant = etat.reclasses[cle];
+    if (avant && avant.envoi) return;
+    var x = etat.reclasses[cle] = { vers: m[1], envoi: true };
+    if (etat.donnees) rendre();
+    try {
+      await etat.mcp.callTool(SERVEUR, "clore", { cle: cle, reclasser: m[1] }, { cache: false });
+      x.fait = Date.now(); alerte("");
+    } catch (err) {
+      var c = err && err.code;
+      if (c === "not_in_manifest") etat.clore = false;
+      if (avant) etat.reclasses[cle] = avant; else delete etat.reclasses[cle];
+      alerte(c === "cancelled" ? "Ligne non reclassée : refusé dans l'app." : "Ligne non reclassée" + (err && err.message ? " : " + err.message : "") + ".");
+    }
+    x.envoi = false;
+    if (etat.donnees) rendre();
+    try { await etat.mcp.invalidate(SERVEUR, "lignes"); } catch (y) {}
+  }
+  // The page closes within the 10 s: what was retired leaves now, as the PM asked.
+  if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("pagehide", function () {
+    Object.keys(etat.retraits).forEach(function (k) { confirmerRetrait(k); });
+  });
+  async function clore(bouton) {
+    var cle = bouton.getAttribute("data-clore");
+    if (!etat.mcp || !etat.clore || !/^(?:[0-9a-f]{12}|etape-(?:matin|terminal))$/.test(cle || "") || etat.closes[cle]) return;
+    bouton.disabled = true;
+    try {
+      await etat.mcp.callTool(SERVEUR, "clore", { cle: cle }, { cache: false });
+      etat.closes[cle] = 1; alerte("");
+    } catch (err) {
+      var c = err && err.code;
+      if (c === "not_in_manifest") etat.clore = false;
+      alerte(c === "cancelled" ? "Ligne non fermée : refusé dans l'app." : "Ligne non fermée" + (err && err.message ? " : " + err.message : "") + ".");
+    }
+    if (etat.donnees) rendre();
+    try { await etat.mcp.invalidate(SERVEUR, "lignes"); } catch (x) {}
+  }
+
+  // Le verbe ouvre la session où agir, par le connecteur du Mac : un lien de session dans une
+  // page ne fait rien, l'app l'intercepte. Pour un chantier, la session qui l'ancre ; « Voir la session », celle qui en parle.
+  // Ligne de chantier : le verbe met aussi le numéro de la question (« Q10 ») dans le presse-papiers, à coller
+  // dans la session qui s'ouvre. La page essaie elle-même, le connecteur le fait sur le Mac.
+  // Le bloc « Autorisations en attente » : les lignes d'arrêt sur une autorisation, et, quand l'interrupteur est
+  // allumé (autorisations().actif), les demandes que le hook a confiées au connecteur. Une ligne qui a sa demande (même
+  // session) porte « Autoriser cette fois » et « Refuser » ; une demande sans ligne (la session vient de s'arrêter) a la
+  // sienne. Les boutons n'appellent « decider » que sur un clic, jamais seuls.
+  function rendreAutorisations(autorisations) {
+    var auto = etat.auto && etat.auto.actif ? etat.auto : { demandes: [], decisions: [] };
+    var prises = {}, rangs = [];
+    autorisations.forEach(function (l) {
+      var d = (auto.demandes || []).filter(function (x) { return !prises[x.id] && x.sessionId && x.sessionId === l.cle; })[0];
+      if (d) prises[d.id] = 1;
+      rangs.push({ l: l, d: d });
+    });
+    (auto.demandes || []).forEach(function (d) {
+      if (prises[d.id]) return;
+      rangs.push({ d: d, l: { studio: "", session: d.titre || "Session " + String(d.session || "").slice(0, 8), cle: d.sessionId,
+        extrait: d.extrait, depuis: d.depuis } });
+    });
+    var n = rangs.length, tous = n + (etat.nClics || 0);
+    $("bloc-autorisations").hidden = !tous;
+    $("autorisations-titre").textContent = "En un clic (" + tous + ")";
+    $("autorisations").innerHTML = n ? "<table><thead><tr><th>Studio</th><th>Session</th><th>Ce que la session veut faire</th><th class=\"d\">Agir</th><th class=\"d\">Depuis</th></tr></thead><tbody>" +
+      rangs.map(function (r) {
+        var l = r.l, d = r.d;
+        var sid = etat.mcp ? sessionAOuvrir(l) : "";
+        var age = Date.now() - l.depuis;
+        var quoi = l.extrait || (d && d.extrait) ? "<code>" + esc(l.extrait || d.extrait) + "</code>" : '<span class="sans">détail dans la session</span>';
+        var agir = "";
+        var recent = l.cle && etat.parSession[l.cle] && Date.now() - etat.parSession[l.cle].t < 120000 ? etat.parSession[l.cle] : null;
+        var envoi = d ? etat.envoyes[d.id] : recent;  // la ligne reste le temps que la session reparte
+        if (envoi && envoi.etat === "envoye") agir = '<span class="envoye">' + ENVOYE[envoi.decision] + "</span>";
+        else if (d && etat.mcp) agir = '<button type="button" class="decide oui" data-decider="' + esc(d.id) + '" data-decision="allow"' + (envoi ? " disabled" : "") + ">Autoriser cette fois</button>" +
+          '<button type="button" class="decide non" data-decider="' + esc(d.id) + '" data-decision="deny"' + (envoi ? " disabled" : "") + ">Refuser</button>";
+        agir += sid ? '<button type="button" class="act k-task ouvrir" data-sid="' + esc(sid) + '" title="Ouvrir la session pour répondre">Ouvrir ↗</button>'
+          : agir ? "" : '<span class="chip k-go">Faire</span>';
+        return '<tr class="nouveau-studio"><td class="studio">' + esc(l.studio) + "</td>" +
+          '<td class="session">' + (l.non_lue ? '<span class="non-lue" title="non lue"></span>' : "") + esc(l.session) + "</td>" +
+          '<td class="action extrait">' + quoi + "</td>" +
+          '<td class="agir">' + agir + "</td>" +
+          '<td class="quand"><span class="elapsed' + (age > 48 * 3600000 ? " late" : "") + '" title="' + esc(dateCourte(l.depuis)) + '">' + ecoule(age) + "</span></td></tr>";
+      }).join("") + "</tbody></table>" : "";
+  }
+  // Réponse en direct : une ligne dont la session attend, sur le hook Stop, la réponse à cette question porte un
+  // bouton par réponse fermée (même session que « cle », même numéro quand la ligne en a un). « repondre » ne part que
+  // sur un clic. Interrupteur coupé ou connecteur sans l'outil : rien ne change.
+  // La session qui attend : celle de la ligne, ou, pour une ligne de chantier (cle = le contremaître), la session qui a
+  // posé la question (source), alors seulement sur le même numéro.
+  function sessionsDe(l) {
+    return [l.cle, l.source].filter(function (s) { return /^local_/.test(s || ""); });
+  }
+  function attenteDe(l) {
+    if (!etat.mcp || !etat.att.actif) return null;
+    var ids = sessionsDe(l);
+    if (!ids.length) return null;
+    return (etat.att.attentes || []).filter(function (a) {
+      if (!Array.isArray(a.choix)) return false;
+      // A question without a number: only on the single line of its session.
+      if (!a.numero) return !l.question && !!l.seule && a.sessionId === sessionAOuvrir(l);
+      // Q40: a session may wait on several numbered questions; each line takes the wait of its own number only.
+      if (a.sessionId === l.cle) return !!l.question && l.question === a.numero;
+      return a.sessionId === l.source && !!l.question && l.question === a.numero;
+    })[0] || null;
+  }
+  // Une réponse fermée qui marche toujours. Une question numérotée qui a ses réponses fermées (go, clic, décision
+  // à options) porte toujours les mêmes boutons, à la même place. La session attend sur la page : le clic lui donne la
+  // réponse (« repondre »). Sinon : le clic copie la réponse entière (« Q25 go ») et ouvre la session, où la coller.
+  // Jamais d'échéance affichée. Quand le chemin change (l'attente arrive ou finit), le bouton garde son sens et reste
+  // inactif une seconde : jamais un clic qui part par un chemin que le PM n'a pas vu.
+  function vueDe(l, etatLigne) {
+    var cle = cleDe(l), v = etat.vues[cle];
+    // Le premier rendu d'une ligne sans attente n'est pas une bascule : rien n'a changé sous le doigt.
+    if (!v || v.etat !== etatLigne) etat.vues[cle] = v = { etat: etatLigne, t: !v && etatLigne === "copie" ? 0 : Date.now() };
+    return v;
+  }
+  function enBascule(v) { return Date.now() - v.t < BASCULE_MS; }
+  // La session où la réponse copiée se colle : celle qui a posé la question (« source » d'une ligne de chantier), sinon
+  // celle que la ligne ouvre.
+  function sessionDeLaReponse(l) {
+    return /^local_/.test(l.source || "") ? l.source : sessionAOuvrir(l);
+  }
+  function boutonsReponse(l) {
+    var recent = null;
+    sessionsDe(l).forEach(function (s) {
+      var r = etat.repParSession[s];
+      if (!recent && r && Date.now() - r.t < 120000 && (l.question ? r.numero === l.question : s === l.cle)) recent = r;
+    });
+    var a = attenteDe(l), envoi = a ? etat.repondues[a.id] : recent;
+    if (envoi && envoi.etat === "envoye" && (!a || !l.question || envoi.numero === l.question)) return '<div class="reponses"><span class="envoye">Envoyée, la session reprend</span></div>';
+    var attend = a && !(a.jusqua && Date.now() >= a.jusqua);
+    // Closed answers without a number (or a chantier line whose number is the foreman's): the answer alone.
+    var choix = attend ? a.choix : (Array.isArray(l.choix) && l.choix.length ? l.choix : null);
+    if (!choix || !etat.mcp) return "";
+    var v = vueDe(l, attend ? "attend" : "copie");
+    if (attend) {
+      return '<div class="reponses">' + choixAffiches(choix, l).map(function (x) {
+        var c = x.c;
+        return '<button type="button" class="decide choix" data-repondre="' + esc(a.id) + '" data-choix="' + esc(c) + '"' + (envoi || enBascule(v) ? " disabled" : "") +
+          ' title="Répondre « ' + esc((a.numero ? a.numero + " " : "") + c) + ' » à la session, qui reprend aussitôt">' + esc(x.libelle) + "</button>";
+      }).join("") + "</div>";
+    }
+    var sid = sessionDeLaReponse(l);
+    if (!/^local_/.test(sid || "")) return "";
+    var cle = cleDe(l), copie = etat.copies[cle];
+    if (copie && Date.now() - copie.t >= COPIE_MS) { delete etat.copies[cle]; copie = null; }
+    // Q40: the click answers the session whatever its state (repondre with session and question); the line says what
+    // became of the answer. Only when the connector cannot (not a Mac, Terminal not logged in…) does it copy and open.
+    var f = confieDe(l, sid, cle);
+    if (f && f.etat === "en_cours") return '<div class="reponses"><span class="envoye">Envoi…</span></div>';
+    // « envoyée » only once the session has the answer: the hook took it (directe), or its transcript holds it (recue).
+    if (f && (f.etat === "directe" || ((f.etat === "reveil" || f.etat === "livree") && !f.fini)))
+      return '<div class="reponses"><span class="envoye">' + (f.etat === "directe" || f.recue ? "Envoyée, la session reprend" :
+        "Envoi de « " + esc(f.texte || "") + " » à la session…") + "</span></div>";
+    var dit = copie ? (copie.terminal ? "Le Terminal n'est pas connecté : réponse copiée, colle-la dans la session" :
+      "« " + esc(copie.texte) + " » copié : colle-le dans la session (Cmd+V)") : f ? etatConfie(f) : "";
+    return '<div class="reponses">' + choixAffiches(choix, l).map(function (x) {
+      var c = x.c, texte = l.question && l.copie_numero !== false ? l.question + " " + c : c;
+      return '<button type="button" class="decide choix" data-reveil="' + esc(sid) + '" data-question="' + esc(l.question || "") + '" data-choix="' + esc(c) +
+        '" data-copier="' + esc(texte) + '" data-ligne="' + esc(cle) + '"' +
+        (enBascule(v) ? " disabled" : "") + ' title="Répondre « ' + esc(texte) + ' » à la session : elle le reçoit tout de suite, ou dès qu\'elle a fini son tour (24 h au plus). Sans le Terminal connecté, la réponse est copiée pour que tu la colles.">' + esc(x.libelle) + "</button>";
+    }).join("") + (dit ? '<span class="copie">' + dit + "</span>" : "") + "</div>";
+  }
+  // What became of the answer given to this line's session: the connector's word (« en_file » of « attentes ») when it
+  // is as recent as the click, else the click's own result.
+  function confieDe(l, sid, cle) {
+    var local = etat.confies[cle] || null, q = l.question || "";
+    var serveur = (etat.att.en_file || []).filter(function (e) { return e.session === sid && (e.question || "") === q; })[0] || null;
+    if (local && local.etat === "en_cours") return local;
+    if (serveur && (!local || (serveur.clic || 0) >= (local.clic || 0) - 1000)) return serveur;
+    if (local && Date.now() - local.t < 60000) return local;
+    return serveur;
+  }
+  function etatConfie(f) {
+    var texte = f.texte ? "« " + esc(f.texte) + " » " : "";
+    // A queued answer says so plainly, and after 24 h it falls back to the copy (PM and peer review, 2026-11-09).
+    if (f.etat === "file" || f.etat === "en_file") return "Réponse prête : " + texte + "partira dès que la session a fini son tour (cliquée à " + heure(f.clic || Date.now()) + ")";
+    if (f.etat === "expiree") return "Pas envoyée en 24 h : la session n'a pas fini son tour. " + (f.texte && f.session ?
+      '<button type="button" class="voir" data-sid="' + esc(f.session) + '" data-copier="' + esc(f.texte) + '" title="Copier la réponse et ouvrir la session">Copier « ' + esc(f.texte) + ' » et ouvrir la session ↗</button>' : "Réponds dans la session.");
+    if (f.etat === "echec" && f.raison === "terminal") return "Pas envoyée : le Terminal n'est pas connecté. Réponds dans la session.";
+    if (f.etat === "echec") return "Pas envoyée : la session n'a pas pu reprendre. Réponds dans la session.";
+    if (f.etat === "livree" || f.etat === "reveil") return texte + "envoyée à " + heure(f.livree || f.clic || Date.now());
+    return "";
+  }
+  // La page se re-rend à la prochaine échéance : la limite d'une attente, ou la fin d'une bascule d'une seconde.
+  function planifierEcheance() {
+    var prochaine = Infinity, maintenant = Date.now();
+    (etat.att.attentes || []).forEach(function (a) { if (a.jusqua && a.jusqua > maintenant) prochaine = Math.min(prochaine, a.jusqua); });
+    Object.keys(etat.vues).forEach(function (k) { var f = etat.vues[k].t + BASCULE_MS; if (f > maintenant) prochaine = Math.min(prochaine, f); });
+    Object.keys(etat.copies).forEach(function (k) { var f = etat.copies[k].t + COPIE_MS; if (f > maintenant) prochaine = Math.min(prochaine, f); });
+    clearTimeout(etat.echeance);
+    if (prochaine < Infinity) etat.echeance = setTimeout(function () { if (etat.donnees) rendre(); }, prochaine - maintenant + 20);
+  }
+  // La réponse en direct dit quand elle ne peut pas marcher : outil refusé à la page, lecture en échec, ou interrupteur
+  // allumé sans socket. Interrupteur coupé : rien, c'est l'état normal.
+  function noteAttentes(texte) {
+    $("note-attentes").textContent = texte || "";
+    $("note-attentes").hidden = !texte;
+  }
+  function recevoirAttentes(ev) {
+    var p = ev.type === "data" && ev.result && ev.result.payload;
+    etat.att = p && Array.isArray(p.attentes) ? p : { actif: false, attentes: [] };
+    if (ev.type !== "data") {
+      var c = ev.error && ev.error.code;
+      noteAttentes("Réponse en direct indisponible : lecture des attentes impossible (" + (c || "erreur") + ").");
+    } else if (p && p.interrupteur && !p.actif) {
+      noteAttentes("Réponse en direct indisponible : " + (p.raison || "le lien entre la page et ton Mac ne répond pas") + ".");
+    } else noteAttentes("");
+    if (etat.donnees) rendre();
+  }
+  async function repondreA(bouton) {
+    var id = bouton.getAttribute("data-repondre"), choix = bouton.getAttribute("data-choix");
+    var a = (etat.att.attentes || []).filter(function (x) { return x.id === id; })[0];
+    if (!etat.mcp || !a || a.choix.indexOf(choix) < 0 || etat.repondues[id]) return;
+    etat.repondues[id] = { etat: "en_cours", numero: a.numero };
+    rendre();
+    try {
+      await etat.mcp.callTool(SERVEUR, "repondre", { id: id, choix: choix }, { cache: false });
+      etat.repondues[id] = { etat: "envoye", numero: a.numero };
+      if (a.sessionId) etat.repParSession[a.sessionId] = { etat: "envoye", numero: a.numero, t: Date.now() };
+      alerte("");
+    } catch (err) {
+      delete etat.repondues[id];
+      var c = err && err.code;
+      alerte(c === "cancelled" ? "Réponse non envoyée : refusée dans l'app." :
+        "Réponse non envoyée" + (err && err.message ? " : " + err.message.replace(/[\s.:;,]*r[ée]ponds dans la session\.?\s*$/i, "") : "") + ". Réponds dans la session.");
+    }
+    rendre();
+    try { await etat.mcp.invalidate(SERVEUR, "attentes"); } catch (x) {}
+  }
+  // Q40: a closed answer to a session that does not wait on the page. The connector answers it (directe), wakes it
+  // (reveil), or keeps the answer until it is free (file). « copie », an error, or a connector from before Q40: the
+  // answer is copied and the session opened, as before; « Terminal pas connecté » says why.
+  async function confier(bouton) {
+    var sid = bouton.getAttribute("data-reveil"), question = bouton.getAttribute("data-question") || "",
+      choix = bouton.getAttribute("data-choix"), texte = bouton.getAttribute("data-copier"), cle = bouton.getAttribute("data-ligne");
+    if (!etat.mcp || !/^local_/.test(sid || "") || !choix || !cle) return;
+    if (etat.confies[cle] && etat.confies[cle].etat === "en_cours") return;
+    etat.confies[cle] = { etat: "en_cours", t: Date.now(), clic: Date.now() };
+    if (etat.donnees) rendre();
+    var p = null;
+    try {
+      var r = await etat.mcp.callTool(SERVEUR, "repondre", { session: sid, question: question, choix: choix }, { cache: false });
+      p = (r && r.payload) || null;
+    } catch (err) {
+      if (err && err.code === "cancelled") {
+        delete etat.confies[cle];
+        alerte("Réponse non envoyée : refusée dans l'app.");
+        if (etat.donnees) rendre();
+        return;
+      }
+      p = null;
+    }
+    if (p && (p.mode === "directe" || p.mode === "reveil" || p.mode === "file")) {
+      etat.confies[cle] = { etat: p.mode, t: Date.now(), clic: p.clic || Date.now(), texte: p.texte || texte };
+      if (p.mode === "directe") etat.repParSession[sid] = { etat: "envoye", numero: question, t: Date.now() };
+      alerte("");
+      if (etat.donnees) rendre();
+      try { await etat.mcp.invalidate(SERVEUR, "attentes"); } catch (x) {}
+      return;
+    }
+    delete etat.confies[cle];
+    await ouvrir(sid, bouton, (p && p.texte) || texte, !!(p && p.mode === "copie" && p.raison === "terminal"));
+  }
+  function recevoirAutorisations(ev) {
+    var p = ev.type === "data" && ev.result && ev.result.payload;
+    // Un connecteur sans l'outil, ou une page déclarée sans lui : pas de boutons, rien d'autre ne change.
+    etat.auto = p && Array.isArray(p.demandes) ? p : { actif: false, demandes: [], decisions: [] };
+    if (etat.donnees) rendre();   // a request that arrives or leaves moves its line between the band and the board
+  }
+  async function decider(bouton) {
+    var id = bouton.getAttribute("data-decider"), decision = bouton.getAttribute("data-decision");
+    if (!etat.mcp || !id || (decision !== "allow" && decision !== "deny") || etat.envoyes[id]) return;
+    var d = (etat.auto.demandes || []).filter(function (x) { return x.id === id; })[0];
+    etat.envoyes[id] = { etat: "en_cours", decision: decision };
+    if (etat.donnees) rendre();
+    try {
+      await etat.mcp.callTool(SERVEUR, "decider", { id: id, decision: decision }, { cache: false });
+      etat.envoyes[id] = { etat: "envoye", decision: decision };
+      if (d && d.sessionId) etat.parSession[d.sessionId] = { etat: "envoye", decision: decision, t: Date.now() };
+      alerte("");
+    } catch (err) {
+      delete etat.envoyes[id];
+      var c = err && err.code;
+      alerte(c === "cancelled" ? "Réponse non envoyée : refusée dans l'app." :
+        "Réponse non envoyée" + (err && err.message ? " : " + err.message.replace(/[\s.:;,]*r[ée]ponds dans la session\.?\s*$/i, "") : "") + ". Réponds dans la session.");
+    }
+    if (etat.donnees) rendre();
+    try { await etat.mcp.invalidate(SERVEUR, "autorisations"); } catch (x) {}
+  }
+
+  function copier(texte) {
+    try { if (texte && navigator.clipboard) navigator.clipboard.writeText(texte).catch(function () {}); } catch (x) {}
+  }
+  async function appelOuvrir(sid, copie) {
+    if (!copie) return etat.mcp.callTool(SERVEUR, "ouvrir", { id: sid }, { cache: false });
+    try { return await etat.mcp.callTool(SERVEUR, "ouvrir", { id: sid, copier: copie }, { cache: false }); }
+    catch (err) {
+      if (err && err.code === "cancelled") throw err;
+      return etat.mcp.callTool(SERVEUR, "ouvrir", { id: sid }, { cache: false });  // connecteur d'avant la copie
+    }
+  }
+  async function ouvrir(sid, el, copie, terminal) {
+    if (!etat.mcp || !sid) return;
+    copier(copie);
+    var ligne = el.getAttribute && el.getAttribute("data-ligne");
+    if (ligne && copie) { etat.copies[ligne] = { texte: copie, t: Date.now(), terminal: !!terminal }; if (etat.donnees) rendre(); }
+    var tr = el.closest("tr"), bouton = el.tagName === "BUTTON" ? el : null, avant = bouton && bouton.innerHTML;
+    if (tr) tr.classList.add("ouvre");
+    try {
+      await appelOuvrir(sid, copie);
+      alerte("");
+    } catch (err) {
+      var c = err && err.code;
+      if (bouton) { bouton.textContent = "Ne s'ouvre pas"; setTimeout(function () { bouton.innerHTML = avant; }, 2500); }
+      if (c === "cancelled") alerte("Session non ouverte : ouverture refusée dans l'app.");
+      else if (c === "server_not_connected") alerte("Ouvre cette page dans l'app Claude pour ouvrir une session.");
+      else alerte("Session non ouverte (" + (c || "erreur") + (err && err.message ? " : " + err.message : "") + ").");
+    } finally { if (tr) setTimeout(function () { tr.classList.remove("ouvre"); }, 600); }
+  }
+  // Un clic n'importe où sur la ligne déplie son détail, comme au tableau du chantier (PM, 2026-10-14) ; seuls le nom
+  // de session et les boutons ouvrent une session : « Ouvrir », « Ouvrir la session qui demande », les fils rouges et « Sans action ».
+  function deplier(tr) {
+    var cle = tr.getAttribute("data-deplier"), ouvert = !etat.deplies[cle];
+    if (ouvert) etat.deplies[cle] = 1; else delete etat.deplies[cle];
+    tr.nextElementSibling.hidden = !ouvert;
+    tr.setAttribute("aria-expanded", String(ouvert));
+  }
+  document.addEventListener("click", function (ev) {
+    var vc = ev.target.closest && ev.target.closest("[data-vue-conflits]");
+    if (vc) {
+      ev.preventDefault(); ev.stopPropagation();
+      etat.ongletProjet = vc.getAttribute("data-vue-conflits") === "conflits" ? "conflits" : "projet";
+      if (etat.donnees) rendre();
+      return;
+    }
+    var rv = ev.target.closest && ev.target.closest("[data-reveil]");
+    if (rv) {
+      ev.preventDefault(); ev.stopPropagation();
+      // « C'est fait » on a gesture done elsewhere answers the session and takes the line off (data-retirer-apres).
+      if (!rv.disabled) { var apresrv = rv.getAttribute("data-retirer-apres"); confier(rv); if (apresrv) retirer(apresrv); }
+      return;
+    }
+    var rep = ev.target.closest && ev.target.closest("[data-repondre]");
+    if (rep) {
+      ev.preventDefault(); ev.stopPropagation();
+      // « C'est fait » on a gesture done elsewhere answers the session and takes the line off (data-retirer-apres).
+      if (!rep.disabled) { var apresrep = rep.getAttribute("data-retirer-apres"); repondreA(rep); if (apresrep) retirer(apresrep); }
+      return;
+    }
+    var og = ev.target.closest && ev.target.closest("[data-onglet]");
+    if (og) {
+      ev.preventDefault(); ev.stopPropagation();
+      choisirOnglet(og.getAttribute("data-onglet"), false);
+      return;
+    }
+    var vt = ev.target.closest && ev.target.closest("[data-voir-tache]");
+    if (vt) {
+      ev.preventDefault(); ev.stopPropagation();
+      voirTache(vt.getAttribute("data-voir-tache"));
+      return;
+    }
+    var lc = ev.target.closest && ev.target.closest("[data-lecture]");
+    if (lc) {
+      ev.preventDefault(); ev.stopPropagation();
+      if (!lc.disabled) lireFichier(lc.getAttribute("data-lecture"));
+      return;
+    }
+    var lf = ev.target.closest && ev.target.closest("[data-lire]");
+    if (lf) {
+      ev.preventDefault(); ev.stopPropagation();
+      if (!lf.disabled) lireEntree(lf.getAttribute("data-lire"));
+      return;
+    }
+    var tv = ev.target.closest && ev.target.closest("[data-tout-vu]");
+    if (tv) {
+      ev.preventDefault(); ev.stopPropagation();
+      if (!tv.disabled) { tv.disabled = true; toutVu(tv.getAttribute("data-tout-vu")); }
+      return;
+    }
+    var en = ev.target.closest && ev.target.closest("[data-entre]");
+    if (en) {
+      ev.preventDefault(); ev.stopPropagation();
+      var cle = en.getAttribute("data-entre");
+      if (etat.entreOuverts[cle]) delete etat.entreOuverts[cle]; else etat.entreOuverts[cle] = 1;
+      if (etat.donnees) rendreMatin(etat.donnees.matin);
+      return;
+    }
+    var ec = ev.target.closest && ev.target.closest("[data-etape-copier]");
+    if (ec) {
+      ev.preventDefault(); ev.stopPropagation();
+      if (!ec.disabled) copierEtape(ec);
+      return;
+    }
+    var ve = ev.target.closest && ev.target.closest("[data-voir-etape]");
+    if (ve) {
+      ev.preventDefault(); ev.stopPropagation();
+      voirEtape(ve.getAttribute("data-voir-etape"));
+      return;
+    }
+    var eg = ev.target.closest && ev.target.closest("[data-ecarter-groupe]");
+    if (eg) {
+      ev.preventDefault(); ev.stopPropagation();
+      if (!eg.disabled) ecarterGroupe(eg);
+      return;
+    }
+    var rc = ev.target.closest && ev.target.closest("[data-reclasser]");
+    if (rc) {
+      ev.preventDefault(); ev.stopPropagation();
+      if (!rc.disabled) reclasser(rc.getAttribute("data-reclasser"));
+      return;
+    }
+    // « Fait / Retirer du tableau » and its « Annuler »: before the unfold of the row that carries them.
+    var pt = ev.target.closest && ev.target.closest("[data-plus-tard]");
+    if (pt) { ev.stopPropagation(); if (!pt.disabled) plusTard(pt.getAttribute("data-plus-tard")); return; }
+    var ab = ev.target.closest && ev.target.closest("[data-abandonner]");
+    if (ab) { ev.stopPropagation(); if (!ab.disabled) retirer(ab.getAttribute("data-abandonner"), true); return; }
+    var rt = ev.target.closest && ev.target.closest("[data-retirer]");
+    if (rt) {
+      ev.preventDefault(); ev.stopPropagation();
+      if (!rt.disabled) retirer(rt.getAttribute("data-retirer"));
+      return;
+    }
+    var an = ev.target.closest && ev.target.closest("[data-annuler]");
+    if (an) {
+      ev.preventDefault(); ev.stopPropagation();
+      annulerRetrait(an.getAttribute("data-annuler"));
+      return;
+    }
+    // After « [data-retirer] » and « [data-annuler] »: a group's buttons never take a line's click.
+    var rg = ev.target.closest && ev.target.closest("[data-retirer-groupe]");
+    if (rg) { ev.stopPropagation(); (rg.getAttribute("data-retirer-groupe") || "").split(" ").forEach(function (k) { retirer(k); }); return; }
+    var ag = ev.target.closest && ev.target.closest("[data-annuler-groupe]");
+    if (ag) { ev.stopPropagation(); (ag.getAttribute("data-annuler-groupe") || "").split(" ").forEach(function (k) { annulerRetrait(k); }); return; }
+    var cl = ev.target.closest && ev.target.closest("[data-clore]");
+    if (cl) {
+      ev.preventDefault(); ev.stopPropagation();
+      if (!cl.disabled) clore(cl);
+      return;
+    }
+    var fi = ev.target.closest && ev.target.closest("[data-fichier]");
+    if (fi) {
+      ev.preventDefault(); ev.stopPropagation();
+      if (!fi.disabled) ouvrirFichier(fi);
+      return;
+    }
+    var rg = ev.target.closest && ev.target.closest("#regle-bascule");
+    if (rg) {
+      ev.preventDefault(); ev.stopPropagation();
+      etat.reglesOuvert = !etat.reglesOuvert;
+      if (etat.donnees) rendreMatin(etat.donnees.matin);
+      return;
+    }
+    var pl = ev.target.closest && ev.target.closest("[data-pli]");
+    if (pl) {
+      ev.preventDefault(); ev.stopPropagation();
+      if (pl.getAttribute("data-pli") === "sujets") etat.sujetsOuverts = !etat.sujetsOuverts; else etat.journalOuvert = !etat.journalOuvert;
+      if (etat.donnees) rendre();
+      return;
+    }
+    var ra = ev.target.closest && ev.target.closest("#attendre-bascule");
+    if (ra) {
+      ev.preventDefault(); ev.stopPropagation();
+      etat.attendreOuvert = !etat.attendreOuvert;
+      if (etat.donnees) rendre();
+      return;
+    }
+    var sb = ev.target.closest && ev.target.closest("#sans-bascule");
+    if (sb) {
+      ev.preventDefault(); ev.stopPropagation();
+      etat.sansOuvert = !etat.sansOuvert;
+      if (etat.donnees) rendre();
+      return;
+    }
+    var rp = ev.target.closest && ev.target.closest("#anciennes-bascule, #projet-anciennes-bascule");
+    if (rp) {
+      ev.preventDefault(); ev.stopPropagation();
+      etat.anciennesOuvertes = !etat.anciennesOuvertes;
+      if (etat.donnees) rendre();
+      return;
+    }
+    var el = ev.target.closest && ev.target.closest("[data-sid]");
+    if (el) {
+      ev.preventDefault(); ev.stopPropagation();
+      if (!el.disabled) ouvrir(el.getAttribute("data-sid"), el, el.getAttribute("data-copier"));
+      return;
+    }
+    var pr = ev.target.closest && ev.target.closest("[data-projet], [data-tous]");
+    if (pr) {
+      ev.preventDefault(); ev.stopPropagation();
+      ouvrirProjet(pr.getAttribute("data-projet") || "");
+      return;
+    }
+    var tr = ev.target.closest && ev.target.closest("tr[data-deplier]");
+    if (!tr || (window.getSelection && String(window.getSelection()).length)) return;  // une sélection de texte ne déplie pas
+    ev.preventDefault(); ev.stopPropagation();
+    deplier(tr);
+  }, true);
+  // Un bouton de Studio descend à son bloc, sans rien ouvrir.
+  document.addEventListener("click", function (ev) {
+    var b = ev.target.closest && ev.target.closest("[data-matin-fait]");
+    if (!b || b.disabled) return;
+    ev.preventDefault(); ev.stopPropagation();
+    faitMatin(b);
+  });
+  document.addEventListener("click", function (ev) {
+    var b = ev.target.closest && ev.target.closest("[data-decider]");
+    if (!b || b.disabled) return;
+    ev.preventDefault(); ev.stopPropagation();
+    decider(b);
+  });
+  document.addEventListener("click", function (ev) {
+    var b = ev.target.closest && ev.target.closest("[data-aller]");
+    if (!b) return;
+    var cible = document.getElementById("bloc-" + b.getAttribute("data-aller"));
+    if (cible) cible.scrollIntoView({ block: "start" });
+  });
+  // Les onglets au clavier (motif ARIA) : flèches gauche et droite, Début et Fin.
+  document.addEventListener("keydown", function (ev) {
+    if (!ev.target.matches || !ev.target.matches('[role="tab"]')) return;
+    if (ev.target.closest && ev.target.closest("#projet-onglets")) return;
+    var tous = ["tableau", "matin", "conflits"].filter(function (x) { var b = $("onglet-" + x); return b && !b.hidden; });
+    var i = tous.indexOf(etat.onglet), o = { ArrowLeft: tous[(i - 1 + tous.length) % tous.length], ArrowRight: tous[(i + 1) % tous.length],
+      Home: tous[0], End: tous[tous.length - 1] }[ev.key];
+    if (!o) return;
+    ev.preventDefault();
+    choisirOnglet(o, true);
+  });
+  document.addEventListener("keydown", function (ev) {
+    if ((ev.key === "Enter" || ev.key === " ") && ev.target.matches && ev.target.matches("tr[data-deplier]")) { ev.preventDefault(); deplier(ev.target); }
+    if ((ev.key === "Enter" || ev.key === " ") && ev.target.matches && ev.target.matches("[data-entre]")) {
+      ev.preventDefault();
+      var cle = ev.target.getAttribute("data-entre");
+      if (etat.entreOuverts[cle]) delete etat.entreOuverts[cle]; else etat.entreOuverts[cle] = 1;
+      if (etat.donnees) rendreMatin(etat.donnees.matin);
+    }
+  });
+
+  function recevoir(ev) {
+    if (ev.type === "data") {
+      var p = ev.result && ev.result.payload;
+      if (p && Array.isArray(p.lignes)) {
+        // Relu toutes les 15 s : le tableau n'est refait que s'il a changé, la sélection et le focus restent.
+        var empreinte = JSON.stringify(Object.assign({}, p, { genere: 0, liste_projets: p.liste_projets ? Object.assign({}, p.liste_projets, { genere: 0 }) : null })), pareil = empreinte === etat.empreinte;
+        etat.donnees = p; etat.empreinte = empreinte;
+        // A reading computed after a reclassement was kept carries it: the page's own copy is no longer needed.
+        Object.keys(etat.reclasses).forEach(function (k) { var x = etat.reclasses[k]; if (x.fait && p.genere > x.fait) delete etat.reclasses[k]; });
+        var hs = p.lecture_app && p.lecture_app.etat === "hors_service";
+        alerte(hs ? "Mon Studio ne lit plus l'app : " + p.lecture_app.raison + ". Le tableau ne dit pas ce qui t'attend."
+          : p.pastilles_lues === false ? "Pastilles de la barre illisibles : « non lue » est déduit des heures de passage." : "");
+        // Des sessions récentes de l'app sans transcript sur ce Mac : Mon Studio ne les lit pas, il le dit en une ligne.
+        var st = p.sans_transcript && p.sans_transcript.texte;
+        $("sans-transcript").textContent = st || "";
+        $("sans-transcript").hidden = !st;
+        if (pareil) rendreAge(); else rendre();
+      }
+      return;
+    }
+    var c = ev.error && ev.error.code;
+    if (c === "server_not_connected" || c === "not_granted" || c === "capability_disabled" || c === "capability_removed") {
+      etat.donnees = null; $("boite").innerHTML = '<p class="empty">Ouvre cette page dans l\'app Claude.</p>'; $("bloc-chantiers").hidden = true; alerte("");
+    } else if (c === "approval_required") {
+      alerte("Mon Studio attend ton accord pour cette page.", true);
+    } else if (c === "not_in_manifest" || c === "blocked_by_policy") {
+      etat.donnees = null; $("boite").innerHTML = '<p class="empty">Mon Studio n\'est pas autorisé pour cette page.</p>';
+    } else if (c === "tool_error") {
+      alerte("Mon Studio n'a pas pu calculer le tableau : " + ((ev.error && ev.error.message) || "erreur") + ".");
+    } else if (!etat.donnees) {
+      alerte("Mon Studio ne répond pas pour l'instant (" + (c || "erreur") + ").");
+    }
+  }
+
+  $("alerte-bouton").addEventListener("click", async function () {
+    if (!etat.mcp) return;
+    try { var r = await etat.mcp.callTool(SERVEUR, "lignes", {}); recevoir({ type: "data", result: r }); }
+    catch (err) { recevoir({ type: "error", error: err }); }
+  });
+
+  setInterval(function () { if (etat.donnees) rendre(); }, 60000);
+
+  // La page se relit toutes les 15 s tant qu'elle est à l'écran, et dès qu'elle y revient (PM, 2026-10-14 : une ligne
+  // doit partir dès qu'il se met à l'action dans sa session). L'API ne sonde pas en dessous de 30 s (refetchInterval) :
+  // la page relance elle-même la lecture surveillée (invalidate). Rien ne part tant que la page est cachée (onglet ou
+  // app en arrière-plan, ou cadre non affiché : la relecture attend une image, requestAnimationFrame) ; elle part à son retour.
+  var RELIRE_MS = 15000;
+  function planifier() {
+    clearTimeout(etat.minuteur); cancelAnimationFrame(etat.image);
+    etat.minuteur = setTimeout(function () { etat.image = requestAnimationFrame(relire); }, RELIRE_MS);
+  }
+  async function relire() {
+    if (document.visibilityState !== "visible") return;  // reprend à visibilitychange
+    planifier(); etat.relu = Date.now();
+    try { await etat.mcp.invalidate(SERVEUR, "autorisations"); } catch (x) {}
+    try { await etat.mcp.invalidate(SERVEUR, "attentes"); } catch (x) {}
+    if (etat.projet) lireProjet();
+    try { await etat.mcp.invalidate(SERVEUR, "lignes"); }
+    catch (x) {  // runtime sans invalidate : une lecture fraîche, remise à la page
+      try { recevoir({ type: "data", result: await etat.mcp.callTool(SERVEUR, "lignes", null, { cache: { refresh: true } }) }); }
+      catch (err) { recevoir({ type: "error", error: err }); }
+    }
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (etat.mcp && document.visibilityState === "visible" && Date.now() - etat.relu > 2000) relire();
+  });
+
+  (async function () {
+    var mcp = null;
+    try { mcp = await claude.use("mcp"); } catch (x) { mcp = null; }
+    if (!mcp) { $("boite").innerHTML = '<p class="empty">Ouvre cette page dans l\'app Claude.</p>'; return; }
+    etat.mcp = mcp;
+    mcp.watchTool(SERVEUR, "lignes", null, recevoir);
+    try { mcp.watchTool(SERVEUR, "autorisations", null, recevoirAutorisations); } catch (x) {}
+    try { mcp.watchTool(SERVEUR, "attentes", null, recevoirAttentes); }
+    catch (x) { noteAttentes("Réponse en direct indisponible : l'outil « attentes » n'est pas accordé à cette page."); }
+    etat.relu = Date.now(); planifier();
+    if (etat.projet) lireProjet();
+    // « Fait / plus d'actu » seulement si la page déclare « clore » : une page publiée avant lui n'a pas le bouton.
+    try {
+      var lt = await mcp.listTools(SERVEUR);
+      var outils = ((lt && lt.servers) || []).reduce(function (a, s) { return a.concat((s.tools || []).map(function (t) { return t.name; })); }, []);
+      etat.clore = outils.indexOf("clore") >= 0;
+      etat.lire = outils.indexOf("lire") >= 0;   // « Lire » : une page publiée avant l'outil n'a pas le bouton
+    } catch (x) { etat.clore = false; etat.lire = false; }
+    if (etat.donnees) rendre();
+  })();
+})();
+</script>

@@ -1,0 +1,61 @@
+<title>Mon Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Coquille de Mon Studio : le code de la page (styles, gabarit, script) vient du connecteur local « mon-studio », outil
+   « gabarit », à chaque ouverture. Une mise à jour du plugin ne republie donc pas la page. Ici, seulement le premier
+   affichage, en attendant ce code. */
+:root { --bg:#F3F4F6; --panel:#FFFFFF; --ink:#19212C; --muted:#5B6574; --line:#DCE0E6; --risk:#BE3328;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg:#11151B; --panel:#191F27; --ink:#E6E9ED; --muted:#9AA3B0; --line:#2B333E; --risk:#F07A6E; color-scheme:dark } }
+:root[data-theme="dark"] { --bg:#11151B; --panel:#191F27; --ink:#E6E9ED; --muted:#9AA3B0; --line:#2B333E; --risk:#F07A6E; color-scheme:dark }
+body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 var(--f-body) }
+.coquille { max-width:1280px; margin:0 auto; padding:24px 20px }
+@media (max-width:560px) { .coquille { padding:16px } }
+.coquille p { margin:0; padding:14px 16px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--muted) }
+.coquille p.panne { border-color:var(--risk); color:var(--ink) }
+.coquille .detail { display:block; margin-top:6px; font-size:14px; color:var(--muted) }
+</style>
+
+<div id="mon-studio"><div class="coquille"><p>Mon Studio se charge…</p></div></div>
+
+<script>
+// Page d'un seul projet (« épingle-moi le projet X ») : Claude remplit cette valeur dans sa copie, au moment de publier
+// (install.py copie-projet), avec le dossier du Studio. Vide : la page de tous les projets.
+var PROJET_FIXE = "";
+</script>
+<script>
+// Chargeur : demande le code de la page au connecteur (outil « gabarit ») et l'exécute dans un <script> rempli par
+// textContent, méthode vérifiée dans une page publiée (Q13, 2026-11-16).
+(function () {
+  var racine = document.getElementById("mon-studio");
+  function panne(texte, detail) {
+    racine.innerHTML = '<div class="coquille"><p class="panne"></p></div>';
+    var p = racine.querySelector("p");
+    p.textContent = texte;
+    if (detail) { var d = document.createElement("span"); d.className = "detail"; d.textContent = detail; p.appendChild(d); }
+  }
+  (async function () {
+    var mcp = null;
+    try { mcp = await claude.use("mcp"); } catch (x) { mcp = null; }
+    if (!mcp) { panne("Ouvre cette page dans l'app Claude."); return; }
+    var g = null, raison = "";
+    try {
+      var r = await mcp.callTool("host:mon-studio", "gabarit", {}, { cache: false });
+      g = r && r.payload;
+    } catch (err) { raison = (err && (err.code || err.message)) || "erreur"; }
+    if (!g || typeof g.js !== "string" || !g.js) {
+      panne("Mon Studio ne répond pas sur ce Mac : la page attend son code du connecteur « mon-studio ». Vérifie que le connecteur est activé dans l'app, puis quitte et rouvre l'app. Si rien ne change, demande « répare Mon Studio » dans une session.",
+        raison ? "Détail : " + raison : "");
+      return;
+    }
+    if (g.css) { var st = document.createElement("style"); st.textContent = g.css; document.head.appendChild(st); }
+    racine.innerHTML = g.html || "";
+    var s = document.createElement("script");
+    s.textContent = g.js;
+    document.body.appendChild(s);
+  })();
+})();
+</script>

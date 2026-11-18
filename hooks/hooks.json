@@ -1,0 +1,142 @@
+{
+  "description": "Mon Studio : recopie le calcul et le connecteur quand la version du plugin change, sans rien écrire dans la session ; dans une session d'un projet suivi ou d'un Studio connu de Mon Studio (`projets.json`), la consigne pour numéroter une question au PM dès qu'elle est posée, le registre du Studio créé à sa première question ; à chaque message du PM, une ligne qui rappelle de finir la réponse par les questions numérotées ou par « Rien à faire de ton côté ». Règles : les règles de travail du PM au démarrage de chaque session, sauf celles que son CLAUDE.md importe déjà. Autorisations : sur une demande d'autorisation d'outil, la confie au connecteur de Mon Studio pour que le PM réponde depuis la page épinglée ; coupé par défaut (`autorisations_tableau` dans cockpit.json), et la fenêtre normale de l'app reste toujours. Session lourde : à chaque message du PM, au-delà de 300 000 tokens de contexte (`decoupe_seuil_tokens` dans cockpit.json), une consigne une fois puis un rappel tous les 100 000 tokens : proposer une session neuve. Liste par projet : au démarrage et à la fin de chaque tour, `projets.py` relu en arrière-plan, cinq minutes au plus souvent, pour que le connecteur, que macOS empêche de lire le Drive, reprenne ce qu'il a lu des Studios. Tous muets tant que Mon Studio n'est pas installé. Réglé à la source : à son tour suivant, la session qui avait posé une question numérotée que l'ingestion auto a vue réglée à sa source (ou que le PM a rouverte) reçoit une ligne, une fois, pour ne plus la rappeler (ou la rappeler de nouveau). Brouillons : quand une session pose, met à jour ou supprime un brouillon Gmail ou Slack, il est noté dans `~/Mon Studio/.parc/brouillons.json` (`brouillons.py`, sans rien écrire dans la session) ; la tâche du matin vérifie ceux qui n'ont pas été envoyés. Réponses en direct : une session qui vient de poser au PM une question numérotée (go, ou décision à options) attend quelques minutes son clic sur la page épinglée au lieu de s'endormir ; coupé par défaut (`reponses_directes` dans cockpit.json). Rangement : à un message du PM dans une session de premier niveau, six heures au plus souvent, la liste des sessions finies à ranger (lancées par une autre session ou marquées « [jetable] », le dernier message du PM déjà traité, rien à trancher, inactives depuis 24 h), calculée sans LLM en arrière-plan par `rangement.py` ; la session les archive. Coupé par `rangement_auto: false` dans cockpit.json. Lignes retirées : à son tour suivant, la session dont le PM a retiré une ligne du tableau (« Fait / Retirer du tableau ») reçoit une ligne, une fois, pour ne plus la rappeler (`retirees.py`). Modèle au lancement : un lancement de session ou de sous-agent sans modèle est refusé, avec le barème, jusqu'à ce que Claude relance le même appel avec `model` (`modele_lancement.py`) ; coupé par l'interrupteur `controle_modele: false` dans cockpit.json, sessions de l'app de bureau seulement. Format des questions : à la fin d'un tour, les questions numérotées du dernier message sont relues (titre court de 60 caractères au plus, la question précise après « : », options avec un libellé court en gras) ; un écart renvoie une fois la session reposter le bloc « À trancher » corrigé (`format_questions.py`), et chaque message relu ajoute une ligne, sans son texte, à `~/Mon Studio/.parc/format-questions.jsonl` ; coupé par l'interrupteur `controle_format: false` dans cockpit.json, sessions de l'app de bureau seulement.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/Mon Studio/.parc/cockpit.json\" ] && ! grep -q '\"disabled\": true' \"$HOME/Mon Studio/.parc/cockpit.json\" && python3 \"${CLAUDE_PLUGIN_ROOT}/skills/mon-studio/scripts/sync.py\" 2>/dev/null || true",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/Mon Studio/.parc/cockpit.json\" ] && ! grep -q '\"disabled\": true' \"$HOME/Mon Studio/.parc/cockpit.json\" && { [ -d \"$HOME/Mon Studio/chantiers\" ] || [ -f \"$HOME/Mon Studio/projets.json\" ]; } && python3 \"${CLAUDE_PLUGIN_ROOT}/skills/mon-studio/scripts/question.py\" hook 2>/dev/null || true",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/Mon Studio/.parc/cockpit.json\" ] && ! grep -q '\"disabled\": true' \"$HOME/Mon Studio/.parc/cockpit.json\" && python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/regles.py\" 2>/dev/null || true",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/Mon Studio/.parc/cockpit.json\" ] && ! grep -q '\"disabled\": true' \"$HOME/Mon Studio/.parc/cockpit.json\" && [ -f \"$HOME/Mon Studio/.parc/projets.py\" ] && python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/projets_instantane.py\" >/dev/null 2>&1 || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/Mon Studio/.parc/cockpit.json\" ] && ! grep -q '\"disabled\": true' \"$HOME/Mon Studio/.parc/cockpit.json\" && echo \"Mon Studio : finis par « À trancher » (« Qn · … » ; un prompt à coller dans une autre session en est une) ou par « Rien à faire de ton côté. » ; en anglais « To decide », « Nothing to do on your side. ».\" || true",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/Mon Studio/.parc/cockpit.json\" ] && ! grep -q '\"disabled\": true' \"$HOME/Mon Studio/.parc/cockpit.json\" && python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/session_lourde.py\" 2>/dev/null || true",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/Mon Studio/.parc/cockpit.json\" ] && ! grep -q '\"disabled\": true' \"$HOME/Mon Studio/.parc/cockpit.json\" && [ -d \"$HOME/Mon Studio/chantiers\" ] && python3 \"${CLAUDE_PLUGIN_ROOT}/skills/mon-studio/scripts/question.py\" notices 2>/dev/null || true",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/Mon Studio/.parc/cockpit.json\" ] && ! grep -q '\"disabled\": true' \"$HOME/Mon Studio/.parc/cockpit.json\" && python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/rangement.py\" hook 2>/dev/null || true",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/Mon Studio/.parc/cockpit.json\" ] && ! grep -q '\"disabled\": true' \"$HOME/Mon Studio/.parc/cockpit.json\" && python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/retirees.py\" 2>/dev/null || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__ccd_session__start_session|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/Mon Studio/.parc/cockpit.json\" ] && ! grep -q '\"disabled\": true' \"$HOME/Mon Studio/.parc/cockpit.json\" && python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/modele_lancement.py\" 2>/dev/null || true",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__.*__(create_draft|update_draft|delete_draft|slack_send_message_draft)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/Mon Studio/.parc/cockpit.json\" ] && ! grep -q '\"disabled\": true' \"$HOME/Mon Studio/.parc/cockpit.json\" && python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/brouillons.py\" >/dev/null 2>&1 || true",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/Mon Studio/.parc/cockpit.json\" ] && ! grep -q '\"disabled\": true' \"$HOME/Mon Studio/.parc/cockpit.json\" && python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/autorisation.py\" 2>/dev/null || true",
+            "timeout": 1800
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/Mon Studio/.parc/cockpit.json\" ] && ! grep -q '\"disabled\": true' \"$HOME/Mon Studio/.parc/cockpit.json\" && python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/format_questions.py\" 2>/dev/null || true",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/Mon Studio/.parc/cockpit.json\" ] && ! grep -q '\"disabled\": true' \"$HOME/Mon Studio/.parc/cockpit.json\" && python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/reponse_directe.py\" 2>/dev/null || true",
+            "timeout": 1860
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/Mon Studio/.parc/cockpit.json\" ] && ! grep -q '\"disabled\": true' \"$HOME/Mon Studio/.parc/cockpit.json\" && [ -f \"$HOME/Mon Studio/.parc/projets.py\" ] && python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/projets_instantane.py\" >/dev/null 2>&1 || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,27 @@
+schema_version: "1.0"
+name: cadrage-propose
+description: Pour cadrer plusieurs points, Claude propose une réponse par point à valider ou corriger, plutôt que des questions ouvertes.
+tags: [format-reponses]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: sonnet
+  max_turns: 4
+  timeout_seconds: 240
+  allowed_tools: []
+  prompt: |
+    Je démarre le cadrage du projet Atlas : une appli interne de réservation de salles pour une PME de 80 personnes, deux sites, aujourd'hui tout se fait par mail à l'accueil. Budget annoncé autour de 40 000 €, mise en service souhaitée avant l'été. Le sponsor est la directrice des services généraux.
+    Aide-moi à cadrer ces quatre points : la décision attendue et qui la prend, les critères de décision, les contraintes, les hypothèses à vérifier.
+    Réponds dans la conversation, ne crée aucun fichier.
+runs: 1
+graders:
+  - name: a-trancher
+    type: regex
+    pattern: "À trancher"
+    match: contains
+  - name: une-proposition-par-point
+    type: llm
+    weight: 2
+    criteria: |
+      PASS si, pour chacun des quatre points (décision attendue et décideur, critères, contraintes, hypothèses), la réponse propose une réponse concrète tirée du contexte donné (par exemple un critère chiffré, une contrainte de date ou de budget), présentée comme une proposition que le PM valide ou corrige ; et si ce qui reste à confirmer est regroupé en fin de message sous « À trancher », numéroté « Qn · titre », chaque question portant une option proposée.
+      FAIL si un des quatre points est traité par une question ouverte sans proposition (« quels sont vos critères ? »), ou si les questions sont dispersées dans le texte.

@@ -1,0 +1,3 @@
+# Skills que Claude peut lancer seul, sans que le PM les tape : un nom de dossier de skills/ par ligne,
+# suivi de sa raison en commentaire. Chaque ajout se justifie. Vide : aucun.
+point  # répond à « fais le point », « qu'est-ce qui m'attend » sans que le PM connaisse la commande ; lecture seule, sans LLM, il rend dix lignes et s'arrête

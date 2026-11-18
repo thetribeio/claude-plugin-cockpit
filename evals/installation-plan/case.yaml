@@ -1,0 +1,32 @@
+schema_version: "1.0"
+name: installation-plan
+description: Premier lancement de /cockpit:mon-studio ; le plan dit chaque coût en tokens et en part de la semaine, demande un seul go et ne pose rien avant.
+tags: [mon-studio]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: sonnet
+  max_turns: 8
+  timeout_seconds: 300
+  allowed_tools: [Bash, Read, Skill]
+  prompt: |
+    /cockpit:mon-studio
+runs: 1
+graders:
+  - name: plan-lance
+    type: tool_used
+    tool: Bash
+    input_match: "install\\.py\\W*plan"
+    min: 1
+  - name: rien-pose-avant-le-go
+    type: tool_used
+    tool: Bash
+    input_match: "install\\.py\\W*(apply|repair|page|copie-projet|page-projet|switch)"
+    min: 0
+    max: 0
+  - name: couts-et-un-go
+    type: llm
+    weight: 2
+    criteria: |
+      PASS si la réponse présente au PM ce qui serait posé (fichiers de Mon Studio, connecteur, page épinglée), dit que le point du matin n'est pas posé à l'installation mais attend comme étape de « Mise en route » au tableau, donne pour les postes qui coûtent leur coût en tokens et en part (pourcentage) de la semaine, nomme les règles de travail données à chaque session, et finit par une seule demande de go (une seule question), sans rien annoncer comme déjà installé.
+      FAIL si les coûts manquent ou ne sont donnés qu'en dollars, si la réponse demande plusieurs go séparés, si elle propose de créer les tâches du matin dans ce go, ou si elle dit avoir installé, publié ou créé quoi que ce soit.

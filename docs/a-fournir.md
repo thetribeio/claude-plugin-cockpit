@@ -1,0 +1,37 @@
+# Ce que le plugin pose pour le point et le suivi
+
+Le skill `point` et le suivi d'un projet ne posent rien sur le poste du PM : neuf besoins sont couverts par le plugin. Le tableau dit, pour chacun, où le plugin le couvre, ou pourquoi il ne le couvre pas. `tests/test_assembly.py` vérifie que chaque ligne est là et que chaque fichier cité existe.
+
+| N° | Besoin | État | Où, ou pourquoi |
+|---|---|---|---|
+| 1 | Les règles de travail dans toutes les sessions | posé | `regles/` (cinq fichiers donnés par défaut, annoncés dans le plan d'installation ; `regles/optionnelles/heures-publication.md` seulement sur demande du PM, `install.py switch regle heures-publication on`) et `hooks/regles.py`, lancé par le hook de démarrage de session (`hooks/hooks.json`). Rien n'est écrit dans le `CLAUDE.md` du PM : les règles arrivent avec le plugin et partent avec lui. Une règle que le PM importe déjà (toute ligne `@…` de son `~/.claude/CLAUDE.md`, reconnue au nom du fichier, singulier ou pluriel) n'est pas donnée deux fois. Les quatre exigences du bloc dans `CLAUDE.md` n'ont plus d'objet. |
+| 2 | L'autorisation de remise à zéro du suivi | écarté | Le suivi lit les sessions de l'app telles qu'elles sont : plus aucune session ne se vide elle-même, et aucun hook de remise à zéro n'est posé. |
+| 3 | Le dossier Mon Studio et les outils du suivi | posé | `skills/mon-studio/scripts/install.py` pose `question.py`, `lignes-brutes.py` et `parc.py` dans `~/Mon Studio/.parc/` (ou `$MON_STUDIO`), sous les mêmes noms qu'avant. `catch_up.py` et `miroir.py` servaient au contremaître : retirés avec lui. |
+| 4 | Les hooks de démarrage du suivi | posé | `skills/mon-studio/scripts/question.py` (`hook`), lancé au démarrage, à la reprise et après une remise à zéro (`hooks/hooks.json`) : dans une session d'un projet suivi, la consigne de numéroter une question au PM en un seul appel. |
+| 5 | La façon de travailler du PM dans `~/Mon Studio` | posé | `skills/mon-studio/scripts/install.py` recopie `~/.claude/foreman-pm/facon-de-travailler.md` vers `~/Mon Studio/facon-de-travailler.md` quand il est à l'ancienne place et manque à la nouvelle. Jamais d'écrasement ; l'original reste. La recopie se fait à l'installation, au `repair`, et à la mise à jour automatique de version. |
+| 6 | Plus de dépendance au plugin `tribe` | posé | `.claude-plugin/plugin.json` ne déclare aucune dépendance, et le test d'assemblage refuse toute référence à un skill de ce plugin. |
+| 7 | Le retrait de la 0.7 et de l'ancien cockpit | écarté | Gestes sur le poste du PM, hors du plugin et hors du plan d'installation : un plugin ne retire pas un autre plugin ni un skill personnel. |
+| 8 | Windows | posé | `skills/point/scripts/fais_le_point.py` tourne sur Mac et sur PC. `skills/mon-studio/scripts/install.py` refuse d'installer hors d'un Mac (`unsupported`), comme avant : la vue projet demande Mon Studio, donc un Mac. |
+| 9 | Le dossier des fiches de session sur chaque système | posé | `skills/mon-studio/scripts/parc.py` (`dossier_fiches`), `skills/mon-studio/scripts/question.py` et `skills/point/scripts/fais_le_point.py` (`app_sessions_dir`) suivent la même règle : `MON_STUDIO_APP_SESSIONS`, puis `%APPDATA%\Claude` sous Windows, le chemin Mac, `~/.config/Claude` sous Linux. Trois copies plutôt qu'une fonction partagée : `parc.py` et `question.py` tournent depuis leur copie dans `~/Mon Studio/.parc/`, le point depuis le plugin ; un module commun changerait les imports du tri. Le test d'assemblage les tient égales, système par système. |
+
+## Hooks
+
+Tous se taisent tant que Mon Studio n'est pas installé : chacun commence par vérifier `~/Mon Studio/.parc/cockpit.json` ou `~/Mon Studio/chantiers`, et ne fait rien sinon.
+
+| Moment | Ce qu'il fait | Condition |
+|---|---|---|
+| Démarrage, reprise | Recopie le calcul et le connecteur de Mon Studio quand la version du plugin change (`sync.py`), sans rien écrire dans la session | Mon Studio installé |
+| Démarrage, reprise, remise à zéro, compactage | Consigne de numérotation des questions dans une session d'un projet suivi (`question.py hook`) | `~/Mon Studio/chantiers` ou `~/Mon Studio/projets.json` existe |
+| Démarrage, reprise, remise à zéro, compactage | Les règles de travail que le `CLAUDE.md` du PM n'importe pas déjà (`regles.py`) | Mon Studio installé |
+| Chaque message du PM | Une ligne : finir par les questions numérotées ou par « Rien à faire de ton côté » | Mon Studio installé |
+| Chaque message du PM | Session lourde (`session_lourde.py`) : au-delà de `decoupe_seuil_tokens` (300 000 par défaut) de contexte, lu dans le transcript, la consigne de proposer une session neuve, une fois au franchissement puis tous les 100 000 tokens ; état par session dans `~/Mon Studio/.parc/sessions-lourdes.json`. Reprend le repérage « Découpe une session trop chargée » de l'ancien contremaître | Mon Studio installé |
+| Lancement d'une session ou d'un sous-agent | Modèle au lancement (`modele_lancement.py`, PreToolUse sur `start_session` et `Agent`) : un lancement sans modèle est refusé, avec le barème, jusqu'à ce que Claude le relance avec un modèle ; coupé par `controle_modele: false` (`install.py switch controle-modele off`) ; sessions de l'app de bureau seulement | Mon Studio installé |
+| Démarrage, reprise | Liste par projet (`projets_instantane.py`) : `projets.py` relu en arrière-plan, cinq minutes au plus souvent, pour que le connecteur reprenne ce qu'il a lu des Studios | Mon Studio installé et `~/Mon Studio/.parc/projets.py` posé |
+| Chaque message du PM | Notices de `question.py` : une ligne, une fois, pour la session dont une question a été vue réglée à sa source ou rouverte par le PM | `~/Mon Studio/chantiers` existe |
+| Chaque message du PM | Rangement (`rangement.py hook`) : six heures au plus souvent, la liste des sessions finies à ranger, que la session archive ; coupé par `rangement_auto: false` | Mon Studio installé |
+| Chaque message du PM | Lignes retirées (`retirees.py`) : la session dont le PM a retiré une ligne du tableau reçoit une ligne, une fois, pour ne plus la rappeler | Mon Studio installé |
+| Après un brouillon Gmail ou Slack posé, changé ou supprimé | Brouillons (`brouillons.py`) : le brouillon est noté dans `~/Mon Studio/.parc/brouillons.json` | Mon Studio installé |
+| Demande d'autorisation d'outil | Autorisation (`autorisation.py`) : la demande est confiée au connecteur, pour que le PM réponde depuis la page ; coupé par défaut (`autorisations_tableau`) | Mon Studio installé |
+| Fin de tour | Format des questions (`format_questions.py`) : les questions numérotées du dernier message sont relues ; un écart renvoie une fois la session reposter le bloc corrigé ; coupé par `controle_format: false` (`install.py switch controle-format off`) ; sessions de l'app de bureau seulement | Mon Studio installé |
+| Fin de tour | Réponse en direct (`reponse_directe.py`) : la session qui vient de poser une question numérotée attend quelques minutes le clic du PM ; coupé par défaut (`reponses_directes`) | Mon Studio installé |
+| Fin de tour | Liste par projet (`projets_instantane.py`), comme au démarrage | Mon Studio installé et `~/Mon Studio/.parc/projets.py` posé |

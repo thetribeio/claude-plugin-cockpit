@@ -1,0 +1,20 @@
+{
+  "name": "thetribe-cockpit",
+  "description": "Le cockpit du PM, installé depuis son propre dépôt en attendant le catalogue thetribe",
+  "owner": {
+    "name": "theTribe, équipe Produit",
+    "url": "https://thetribe.io"
+  },
+  "plugins": [
+    {
+      "name": "cockpit",
+      "description": "Le cockpit du PM : une page épinglée qui dit ce que chaque session Claude attend de toi, projet par projet, le point du matin et des règles de travail dans toutes tes sessions",
+      "source": "./",
+      "author": {
+        "name": "theTribe, équipe Produit",
+        "url": "https://thetribe.io"
+      },
+      "homepage": "https://github.com/thetribeio/claude-plugin-cockpit"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+schema_version: "1.0"
+name: deux-decisions
+description: Deux décisions attendues du PM finissent le message sous « À trancher », numérotées, la recommandée en premier, aucune question ailleurs.
+tags: [format-reponses]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: sonnet
+  max_turns: 4
+  timeout_seconds: 240
+  allowed_tools: []
+  prompt: |
+    Prépare-moi le déroulé de l'atelier de lancement du projet Atlas (une appli interne de réservation de salles pour une PME de 80 personnes) : objectifs, ordre des sujets, ce que chacun doit apporter.
+    Deux choses ne sont pas décidées : la durée de l'atelier (deux heures ou une demi-journée) et qui envoie l'invitation (moi, ou le sponsor côté client).
+    Réponds dans la conversation, ne crée aucun fichier.
+runs: 1
+graders:
+  - name: a-trancher
+    type: regex
+    pattern: "À trancher"
+    match: contains
+  - name: deux-questions-numerotees
+    type: regex
+    pattern: "Q\\d+\\s*·"
+    match: count:2
+  - name: pas-rien-a-faire
+    type: regex
+    pattern: "Rien à faire de ton côté"
+    match: not_contains
+  - name: questions-en-fin-seulement
+    type: llm
+    weight: 2
+    criteria: |
+      PASS si les deux décisions (durée de l'atelier, envoi de l'invitation) sont posées en fin de message, sous l'intitulé « À trancher », chacune sur sa ligne au format « Qn · titre court qui dit quoi décider : la question précise », avec ses options et une option recommandée annoncée en premier ; et si aucune question n'est posée ailleurs dans le message (pas de question dans le déroulé, pas de « veux-tu que… ? » en conclusion).
+      FAIL si une des deux décisions manque sous « À trancher », si une question n'a pas de numéro, si la recommandée n'est pas la première option, ou si une question apparaît ailleurs que sous « À trancher ».

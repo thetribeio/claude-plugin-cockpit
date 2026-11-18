@@ -1,0 +1,23 @@
+# Checks every skill's header on each pull request and on main: a skill runs only when the PM types it,
+# and no header field is misspelled (Claude Code ignores an unknown field without a word).
+name: skills
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  headers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check skill headers
+        run: python3 .github/scripts/check_skills.py
+
+      - name: Test the check
+        run: python3 -m unittest discover -s tests -v

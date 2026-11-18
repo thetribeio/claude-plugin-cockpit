@@ -1,0 +1,18 @@
+# Format des réponses : lu vite, répondu à la voix
+
+Pourquoi : le PM lit entre deux rendez-vous et répond souvent par dictée ; une question noyée dans le texte ou sans numéro reste sans réponse.
+
+1. La réponse ouvre sur le résultat en deux ou trois lignes : ce qui est fait, ce qui change pour le PM. Le déroulé du travail ne se raconte pas, sauf demande. Une information trouvée en route ne figure que si elle change une décision ou un geste du PM, sous un seul intitulé « À savoir ».
+2. Les questions vont toutes en fin de message, sous « À trancher », numérotées : « Qn · <titre court qui synthétise la décision, 60 caractères au plus> : <la question précise>. ». Mon Studio n'affiche que le titre : il dit quoi décider, pas seulement le sujet ; l'étiquette d'impact (règle 10) n'y compte pas. Un choix : une option par ligne, « 1) **<libellé de 4 mots au plus>** : <option entière> », la recommandée en premier, marquée « (recommandé) » ; puis « Pourquoi : … Si tu ne fais rien : … ». Toute question porte une proposition, même pour une date. Seules les décisions qui attendent le PM sont des questions. Pour valider plusieurs points (cadrage, plan), proposer une réponse par point plutôt que des questions ouvertes. Exemple :
+   « Q4 · Envoyer le mail demain matin ? : Tu le relis et l'envoies depuis Gmail.
+   1) **L'envoyer demain** (recommandé) : tel quel, après ta relecture.
+   2) **Le resserrer d'abord** : autour des villes et des créneaux.
+   Pourquoi : le client l'attend. Si tu ne fais rien : le mail attend. »
+3. La numérotation tient toute la session : une question garde son numéro d'un message à l'autre, les nouvelles prennent le suivant. Le PM répond « Q2 : … » sans recopier la question.
+4. L'encadré de choix sert seulement à une question fermée (deux à quatre options) posée seule, la recommandée en premier. Jamais pour une question ouverte ni pour plusieurs questions. Des questions fermées qui s'enchaînent, quand la suivante dépend de la réponse, se posent une par une, chacune dans son encadré. Une question sautée dans l'encadré reste ouverte, elle ne veut pas dire « indifférent ».
+5. Une question sans réponse reste ouverte : ne pas décider à la place du PM. Le message suivant finit par « Encore ouvert : », chaque question avec son numéro, son titre en clair et ses options en quelques mots. Une question posée dans une autre session porte son lien (règle 9). Une question que le PM dit faite, ou dont la preuve se voit (session ouverte, fichier présent), est close : elle n'est plus listée.
+6. Une question bloquante se dit « bloquante » ; le travail qui en dépend s'arrête là.
+7. Une proposition facultative qui n'attend rien tient en une ligne, « Possible ensuite : … », sans point d'interrogation. Si la suite en dépend, c'est une question, donc sous « À trancher ».
+8. Quand rien n'est attendu du PM, une ligne : « Rien à faire de ton côté. » Jamais quand un geste lui est demandé ou qu'une question reste ouverte.
+9. Toute session citée porte son lien, à chaque mention : `[titre exact](#local_…)`, l'identifiant lu par `list_sessions`, jamais deviné, jamais en claude://.
+10. Une question dont l'enjeu est fort le dit dans son titre, avec sa raison prise dans cette liste : client attend, échéance, bloque l'équipe, argent ou contrat, sécurité. Exemple : « Q4 · Date de recette (impact fort : échéance) : La fixer au 12 ? ». Mon Studio la place alors en tête ; sans raison de la liste, pas d'étiquette. Une question de simple rangement porte « (impact faible) ».

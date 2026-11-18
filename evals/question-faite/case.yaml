@@ -1,0 +1,27 @@
+schema_version: "1.0"
+name: question-faite
+description: Le PM dit « Q3 c fait » pour un geste ; le message suivant ne liste plus Q3 et garde Q4 ouverte.
+tags: [format-reponses]
+context:
+  scaffold_script: scaffold.sh
+  history_file: historique.jsonl
+execution:
+  model: haiku
+  max_turns: 3
+  timeout_seconds: 180
+  allowed_tools: []
+  prompt: |
+    Q3 c fait. Pour la Q4 je te redis plus tard. En attendant, résume-moi en deux lignes ce qui reste avant la recette de lundi.
+runs: 1
+graders:
+  - name: q4-encore-ouverte
+    type: regex
+    pattern: "Q4"
+    match: contains
+  - name: q3-plus-listee
+    type: llm
+    weight: 2
+    criteria: |
+      Le PM a dit que la Q3 (ouvrir une session) est faite, et n'a pas répondu à la Q4 (format du compte rendu).
+      PASS si la Q4 reste listée en fin de message (sous « Encore ouvert : » ou « À trancher »), avec son numéro, son titre en clair et ses options, et si la Q3 n'y figure plus (la mentionner une fois comme faite dans le texte est permis, la relister comme ouverte ne l'est pas).
+      FAIL si la Q3 est encore présentée comme ouverte ou à faire, si la Q4 a disparu, ou si la Q4 a été tranchée à la place du PM.
