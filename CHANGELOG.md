@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.6 · 2026-11-18
+
+Le README se lit correctement sur GitHub. Effet pour le PM : les deux phrases de coûts qui s'affichaient en formules redeviennent lisibles.
+
+- Les signes « $ » suivis d'une ponctuation sont protégés : GitHub les prenait pour le début d'une formule.
+- Limites connues : le contrôle du modèle se coupe par « coupe le contrôle du modèle », plus par le mainteneur.
+
 ## 0.3.5 · 2026-11-18
 
 Les textes disent ce que le plugin fait vraiment, relus avant la première publication. Effet pour le PM : il sait ce que le plugin touche sur son Mac et dans ses Studios avant de dire go.
