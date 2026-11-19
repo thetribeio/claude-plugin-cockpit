@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.11 · 2026-11-19
+
+Trois retouches de Mon Studio vues à l'usage. Effet pour le PM : un texte d'envoi ne recouvre plus le titre d'une question, une ligne Mail dit d'où vient son échéance, et un clic sur un projet filtre le tableau au lieu de sauter à un groupe.
+
+- Sur une ligne qui vient d'être répondue depuis le tableau, « Envoi de « Q8 … » à la session… » (et « copié : colle-le… ») a sa propre rangée sous les boutons, passe à la ligne dans sa colonne et ne s'étale plus sur le titre. Essayé dans Chrome, à deux largeurs, avant et après.
+- Une ligne Mail montre la date où le mail est arrivé (« reçu le 18/11 ») à côté de « avant le 23/11 ». Au dépli : « Reçu » et « Échéance », avec « lue dans le mail », « calculée : <règle> » ou « origine de l'échéance inconnue ». Le Mac lit ces dates sur la puce de l'ingestion : ` (reçu le AAAA-MM-JJ)` et ` (échéance AAAA-MM-JJ, lue dans le mail)` ou ` (échéance AAAA-MM-JJ, calculée : <règle>)`. Rien n'est inventé : sans date de réception, la ligne dit « noté le » (le jour du passage de l'ingestion), jamais « reçu le ».
+- Un clic sur un projet, en haut du tableau, ne garde que ses lignes, dans toutes les bandes (D'abord, Ensuite, Peut attendre, Anciennes), demandes de l'ingestion comprises. Le projet choisi est marqué, « Tout afficher » (ou un second clic) remet tout. Tout se passe dans la page, sans appel au Mac. « Vue projet » reste le chemin vers la page du projet.
+- Limites connues : le kit d'ingestion n'écrit pas encore ces deux mentions (reçu, origine de l'échéance) : tant qu'il ne le fait pas, les lignes Mail disent « noté le » et « origine de l'échéance inconnue » ; la bande « En un clic » n'est pas filtrée par le projet ; le filtre n'est pas gardé quand la page se recharge ; le clic sur un projet n'a pas été essayé dans la vraie page, seulement dans la page jouée par les tests.
+
+## 0.3.10 · 2026-11-18
+
+Les sessions finies se rangent depuis Mon Studio, par un bouton « Ranger », au lieu d'être confiées à une autre session. Effet pour le PM : plus d'ordre d'archivage glissé dans une session sans rapport, que l'app refusait en mode auto ; rien n'est archivé sans son message.
+
+- La page montre sous le tableau « N sessions finies à ranger », avec leurs titres. « Ranger » copie la demande d'archivage, écrite par le Mac ; le PM la colle dans une nouvelle session (Cmd+N), et Claude les archive.
+- Le hook du rangement ne confie plus aucune liste : il ne fait que la recalculer en arrière-plan, une heure au plus souvent.
+- « Abandonner » met la session arrêtée dans la même liste, au lieu de la confier à la session suivante.
+- Une session rangée par le bouton apparaît dans « Rangées aujourd'hui » dès que l'app la dit archivée.
+- « Fait / Retirer du tableau » ne se perd plus. Le clic part aussitôt au Mac, et « Annuler » remet la ligne dans les 10 s : avant, une page rechargée dans ces 10 s perdait le clic. Un calcul du tableau qui avait lu l'état avant le clic ne remet plus la ligne : il relit l'état au moment d'écrire et garde la fermeture, comme un jugement Slack (mesuré le 2026-11-18 à 23 h 11). Même chose pour « C'est fait », « Reçu » et « Abandonner ».
+- Une question posée à la fois dans la carte de fin de tour de l'app et en « Qn · » sous « À trancher » ne fait plus qu'une ligne : celle de la Qn, avec son titre, la question entière au dépli et ses boutons de réponse. Avant, l'intitulé « Encore ouvert : » seul sur sa ligne faisait monter la carte à part, sans boutons, avec un détail qui répétait le titre (mesuré le 2026-11-18). Une carte sans Qn correspondante a ses propres boutons, et son dépli montre sa question et l'état de la session. La règle de format demande que la carte reprenne le même « Qn · titre ».
+- Une demande de l'ingestion sans lien, sans auteur ni canal n'affiche plus « Relevé par l'ingestion » (ce n'est pas un nom de session) : la colonne « session » nomme la session qui a fait ce passage sur ce Studio, trouvée par l'heure du passage et le dossier du Studio (titre d'ingestion : « ingest », 📬, ou tâche d'ingestion ; plusieurs sessions de même titre : la dernière lancée), avec « Ouvrir ↗ » vers elle. Au moindre doute (aucune session, ou deux titres différents), elle montre le fichier du Studio où l'ingestion a écrit la ligne, `projet/.ingestion-auto-state.json`. Même chose pour « Source » au dépli. (PM, Q9, 2026-11-19)
+- Limites connues : que l'app accepte l'archivage sur la demande collée n'est pas encore vérifié dans l'app ; que « Ouvrir ↗ » ouvre bien une session d'ingestion déjà rangée (archivée) n'est pas vérifié non plus ; le même archivage, demandé par le PM en toutes lettres, est passé le 2026-11-18.
+
 ## 0.3.9 · 2026-11-18
 
 La vérification du point du matin ne ferme plus une ligne Slack sur une promesse ou sur son propre lien, et revient à Haiku, à son vrai coût. Effet pour le PM : moins de lignes fermées à tort, et un coût annoncé qui est celui mesuré.

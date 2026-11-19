@@ -105,8 +105,8 @@ class CeQueLeLundiNote(Base):
         self.assertEqual(self.note()['studios'], {self.d: {'etat': 'ingestion'}})
         r = self.relecture()
         self.assertEqual((r['etat'], r['a_jour'], r['le']), ('ingestion', False, '16/11'))
-        self.assertIn("Relecture du 16/11 sautée : l'ingestion automatique passe sur ce Studio", r['texte'])
-        self.assertIn('Dernier passage complet : le 10/11.', r['texte'])
+        # The Monday re-read is no longer promised (2026-11-17): no sentence about it.
+        self.assertEqual(r['texte'], '')
 
     def test_too_large(self):
         self.verifie('2026-01-01')
@@ -137,8 +137,7 @@ class SansNoteDuLundi(Base):
         self.verifie()
         r = self.relecture()
         self.assertEqual((r['etat'], r['a_jour'], r['le']), ('aucune', False, ''))
-        self.assertEqual(r['texte'], "Pas relu depuis le passage complet du 10/11 : la relecture du lundi n'a pas encore "
-                                     "tourné sur ce Studio.")
+        self.assertEqual(r['texte'], '')
 
     def test_a_marker_of_an_earlier_version_gives_the_ingestion_as_the_reason(self):
         self.verifie()
@@ -147,11 +146,9 @@ class SansNoteDuLundi(Base):
             json.dumps({'semaine': '2026-S47', 'le': '2026-11-16T07:35:29'}), encoding='utf-8')
         r = self.relecture()
         self.assertEqual((r['etat'], r['a_jour']), ('aucune', False))
-        self.assertIn('Pas relu depuis le passage complet du 10/11', r['texte'])
-        self.assertIn("l'ingestion automatique passe sur ce Studio", r['texte'])
-        # Silent for more than 8 days, the ingestion is no longer the reason.
+        self.assertEqual(r['texte'], '')
         r = self.relecture(LUNDI + 9 * 86400)
-        self.assertIn("n'a pas encore tourné", r['texte'])
+        self.assertEqual(r['texte'], '')
 
     def test_the_ingestion_read_from_the_snapshot_when_the_drive_refuses(self):
         self.verifie()
@@ -162,9 +159,8 @@ class SansNoteDuLundi(Base):
             self.assertTrue(self.p.ingestion_recente(self.d, garde, LUNDI + 86400))
             self.assertFalse(self.p.ingestion_recente(self.d, garde, LUNDI + 9 * 86400))
             self.assertIsNone(self.p.ingestion_recente(self.d, {}, LUNDI + 86400))
-            # Not known: no reason given, rather than a wrong one.
-            self.assertEqual(self.p.relecture_du_studio(self.d, '10/11/2026', {}, LUNDI + 86400)['texte'],
-                             'Pas relu depuis le passage complet du 10/11.')
+            # Not known: no sentence at all.
+            self.assertEqual(self.p.relecture_du_studio(self.d, '10/11/2026', {}, LUNDI + 86400)['texte'], '')
 
     def test_a_complete_pass_after_the_monday_replaces_its_note(self):
         self.verifie('2026-11-18')
@@ -173,7 +169,7 @@ class SansNoteDuLundi(Base):
             encoding='utf-8')
         r = self.relecture(LUNDI + 3 * 86400)
         self.assertEqual(r['etat'], 'aucune')
-        self.assertIn('Pas relu depuis le passage complet du 18/11', r['texte'])
+        self.assertEqual(r['texte'], '')
 
     def test_the_eight_days_are_the_pass_s_own(self):
         self.assertEqual(self.p.INGESTION_ACTIVE_S, self.conflits.INGESTION_ACTIVE_S)
@@ -201,12 +197,13 @@ class Page(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         return json.loads(r.stdout)['projetConflits']
 
-    def test_skipped_is_said_with_its_reason_and_never_up_to_date(self):
-        texte = "Relecture du 16/11 sautée : l'ingestion automatique passe sur ce Studio. Dernier passage complet : le 10/11."
-        html = self.run_page(relecture={'etat': 'ingestion', 'a_jour': False, 'le': '16/11', 'sujets': 0, 'texte': texte})
+    def test_a_failed_re_read_is_said_and_never_up_to_date(self):
+        texte = "Relecture du 16/11 en échec : le Studio n'a pas pu être relu. Dernier passage complet : le 10/11."
+        html = self.run_page(relecture={'etat': 'erreur', 'a_jour': False, 'le': '16/11', 'sujets': 0, 'texte': texte})
         self.assertIn('<strong>Dernier passage complet le 10/11</strong>', html)
-        self.assertIn('Relecture du 16/11 sautée', html)
+        self.assertIn('Relecture du 16/11 en échec', html)
         self.assertNotIn('à jour', html)
+        self.assertNotIn('lundi', html)
 
     def test_up_to_date_only_after_a_re_read(self):
         html = self.run_page(relecture={'etat': 'rien', 'a_jour': True, 'le': '16/11', 'sujets': 0,

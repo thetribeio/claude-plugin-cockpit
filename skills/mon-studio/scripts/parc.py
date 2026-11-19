@@ -804,12 +804,19 @@ def encadre_ouvert(entrees):
 
 
 def rappel_sans_numero(texte):
-    """Vrai si une ligne « Encore ouvert » du message ne porte aucun numéro de question."""
+    """Vrai si une ligne « Encore ouvert » du message ne porte aucun numéro de question. L'intitulé seul sur sa ligne
+    (« Encore ouvert : », le format du PM) suivi de ses questions numérotées n'en est pas un (mesuré le 2026-11-18 :
+    il faisait monter la carte de fin de tour de l'app en ligne à part, sans boutons, à la place de la Qn)."""
     en_code = False
-    for ligne in (texte or '').split('\n'):
+    lignes = (texte or '').split('\n')
+    for i, ligne in enumerate(lignes):
         if ligne.lstrip().startswith(('```', '~~~')):
             en_code = not en_code
         elif not en_code and debut_section(ligne) == 'ouvert' and not REF_QUESTION.search(ligne):
+            if re.fullmatch(r"[\s#*_>]*encore\s+ouverte?s?\s*[*_]*\s*:?\s*[*_]*\s*", ligne, re.I):
+                suite = next((x for x in lignes[i + 1:] if x.strip()), '')
+                if REF_QUESTION.match(re.sub(r"^[\s#*_>\-\d.)]+", '', suite)):
+                    continue
             return True
     return False
 
@@ -3603,13 +3610,40 @@ def demandes(s):
     m = QUESTION_TITREE.match(carte['menu'][0]['question'])
     num = int(m.group(1)) if m else None
     nums = {l.get('num') for l in lignes} - {None}
-    # Une carte sans numéro dans un message qui numérote ses questions la redit dans la boîte, en d'autres mots (mesuré
-    # sur un Studio : « Relancer le passage maintenant ? » pour « Q1 · Relance du passage »).
-    if (num in nums if num is not None else bool(nums)) or any(
+    # The card restates a « Qn » of the message (PM, 2026-11-18: one line, the Qn's title, its whole question unfolded,
+    # its answer buttons): the same number, else the Qn whose options are the card's answers, else the only Qn of its
+    # « À trancher » (mesuré sur un Studio : « Relancer le passage maintenant ? » pour « Q1 · Relance du passage »).
+    if (num in nums if num is not None else carte_redit(carte['menu'], lignes) is not None) or any(
             nu(d['titre']) in (nu(l.get('titre') or ''), nu(l.get('suite') or '')) for l in lignes):
         return lignes
+    # A card of its own: its answers are buttons, as the app's (the label, sent word for word), and it unfolds to its
+    # question and the session's recap, never to its title alone.
     d.update(num=num, lecture='native', bloque=False, native=True)
+    choix = choix_de_carte(carte['menu'])
+    if choix and num is None:
+        d.update(choix=choix, seule=True, question='', suite='')   # its answers are the buttons, not grey text
+    d['detail'] = ' '.join(x for x in (d.get('detail') or '', ('Où en est la session : ' + s['recap']) if s.get('recap') else '') if x)
     return sorted([l for l in lignes if l.get('suite') != A_VERIFIER_SUITE] + [d], key=lambda l: l.get('num') or 0)
+
+
+def carte_redit(menu, lignes):
+    """The numbered line of the message that the end-of-turn card asks again, or None: the one whose options are the
+    card's answers (« Oui, après Ranger » for « **Après Ranger** »; at least half of them), else the only numbered
+    question under « À trancher »."""
+    labels = [nu(RECOMMANDE.sub('', str(o.get('label') or ''))) for o in (menu[0].get('options') or []) if o.get('label')]
+    labels = [x for x in labels if x]
+    numerotees = [l for l in lignes if l.get('num') is not None and l.get('lecture') in ('format', 'rappel')]
+    meilleure, score = None, 0
+    for l in numerotees:
+        opts = options_entieres(l.get('brut') or l.get('detail') or f"{l.get('titre') or ''} {l.get('suite') or ''}")
+        noms = [nu(o['gras'] or o['texte']) for o in opts]
+        n = sum(1 for x in labels if any(o and (o in x or x in o) for o in noms))
+        if n > score:
+            meilleure, score = l, n
+    if meilleure is not None and labels and 2 * score >= len(labels):
+        return meilleure
+    format_ = [l for l in numerotees if l.get('lecture') == 'format']
+    return format_[0] if len(format_) == 1 else None
 
 
 def _demandes(s):
@@ -4857,17 +4891,78 @@ def pour_la_page(e):
             'lecture_app': e.get('lecture_app') or {'etat': 'ok', 'raison': ''},
             'sans_transcript': e.get('sans_transcript'),
             'projets': projets_de_la_page(e['tableau'], e.get('_metas') or []),
-            'rangees': rangees_du_jour(e['genere'])}
+            'rangees': rangees_du_jour(e['genere'], e.get('_metas')),
+            **a_ranger_pour_la_page(e.get('_metas') or [], e['genere'])}
 
 
-def rangees_du_jour(maintenant):
-    """The sessions the rangement archived today (hooks/rangement.py writes them in .parc/rangement.json), so the PM
-    can reopen one from the Archived list: [{'id', 'titre', 'quand' (ms)}], the latest first."""
+def rangees_du_jour(maintenant, metas=None):
+    """The sessions archived today through the rangement: those hooks/rangement.py recorded in .parc/rangement.json
+    (`rangees`), and those of a « Ranger » click (RANGER_CLICS) whose card already says archived (`metas`), so the line
+    moves at once. [{'id', 'titre', 'quand' (ms)}], the latest first, each once."""
     jour = dt.datetime.fromtimestamp(maintenant).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-    r = (lire_json(INTERNE / 'rangement.json', {}) or {}).get('rangees') or []
+    r = [x for x in (lire_json(INTERNE / 'rangement.json', {}) or {}).get('rangees') or [] if isinstance(x, dict)]
+    archivees = {m['id'] for m in metas or [] if m.get('id') and m.get('archivee')}
+    connues = {x.get('id') for x in r}
+    for sid, c in ranger_clics(maintenant).items():
+        if sid in archivees and sid not in connues:
+            r.append({'id': sid, 'titre': c.get('titre') or '', 'quand': c.get('quand')})
     return sorted(({'id': x.get('id'), 'titre': x.get('titre') or '', 'quand': int(x['quand'] * 1000)} for x in r
-                   if isinstance(x, dict) and isinstance(x.get('quand'), (int, float)) and x['quand'] >= jour),
+                   if isinstance(x.get('quand'), (int, float)) and x['quand'] >= jour),
                   key=lambda x: -x['quand'])
+
+
+# « Ranger » (PM, Q5, 2026-11-18): the sessions the rangement would archive are a line of the board, and the PM's click
+# is his consent. The app refuses archive_session when the order comes from a hook's text (auto mode, 2026-11-18), and
+# the page cannot archive: the click copies a request in the PM's own words, which he pastes in a session of his.
+RANGER_CLICS = 'ranger.json'   # in ~/Mon Studio/.parc: {session: {'titre', 'quand'}}, the sessions of a « Ranger » click
+ABANDONNEES = 'abandonnees.json'   # written by the connector: « Abandonner » on a stopped session's line
+RANGER_MAX = 20                # sessions in one request
+RANGER_JOURS = 7               # a click or an abandon older than that is forgotten
+
+
+def ranger_clics(maintenant):
+    r = lire_json(INTERNE / RANGER_CLICS, {})
+    return {k: v for k, v in (r if isinstance(r, dict) else {}).items()
+            if isinstance(v, dict) and maintenant - (v.get('quand') or 0) < RANGER_JOURS * 86400}
+
+
+def a_ranger(metas, maintenant):
+    """[{'id', 'titre', 'abandon'}] the sessions to put away: the stopped ones the PM gave up (« Abandonner », less than
+    7 days ago), then those hooks/rangement.py judged finished, when the rangement is on. Only a session whose card is
+    on this Mac and not archived: an archived one leaves the line at once, an unknown one is a doubt."""
+    ouvertes = {m['id']: m for m in metas if m.get('id') and not m.get('archivee') and not m.get('tache')}
+    etat = lire_json(INTERNE / 'cockpit.json', {}) or {}
+    calcul = lire_json(INTERNE / 'rangement.json', {}) or {}
+    ab = lire_json(INTERNE / ABANDONNEES, {})
+    sortie, vus = [], set()
+    for sid, x in (ab if isinstance(ab, dict) else {}).items():
+        if isinstance(x, dict) and maintenant - (x.get('quand') or 0) < RANGER_JOURS * 86400:
+            sortie.append((sid, True))
+    if isinstance(etat, dict) and etat.get('rangement_auto') is not False and isinstance(calcul, dict):
+        sortie += [(x.get('id'), False) for x in calcul.get('a_ranger') or [] if isinstance(x, dict)]
+    liste = []
+    for sid, abandon in sortie:
+        if sid in ouvertes and sid not in vus:
+            vus.add(sid)
+            liste.append({'id': sid, 'titre': ' '.join(str(ouvertes[sid].get('titre') or '').split())[:120],
+                          'abandon': abandon})
+    return liste[:RANGER_MAX]
+
+
+def texte_a_ranger(liste):
+    """The request the « Ranger » button copies: the PM's own words, the sessions by id and title, nothing else."""
+    if not liste:
+        return ''
+    lignes = '\n'.join(f"- {x['id']} ({x['titre'] or 'sans titre'})" for x in liste)
+    return ("Range ces sessions finies que Mon Studio me montre : archive-les une par une avec "
+            "mcp__ccd_session_mgmt__archive_session, sans les ouvrir ni rien faire d'autre. Si un archivage est refusé, "
+            "passe à la suivante. Dis-moi ensuite en une ligne combien sont rangées.\n" + lignes)
+
+
+def a_ranger_pour_la_page(metas, maintenant):
+    """The « À ranger » line of the page: its sessions and the request its button copies."""
+    liste = a_ranger(metas, maintenant)
+    return {'a_ranger': liste, 'ranger_texte': texte_a_ranger(liste)}
 
 
 GARDER_PAGE = ('studio', 'session', 'sous', 'lien', 'ouvrir', 'cle', 'non_lue', 'type', 'verbe', 'complet',
@@ -4882,7 +4977,9 @@ def rang_page(l):
     question (depli : énoncé, options, recommandation, fichiers cités) ; une ligne sans numéro, ses puces
     (ce_qu_attend). `dossier` : le dossier de la session, où « Lire » cherche les fichiers cités."""
     r = dict({k: l.get(k) for k in GARDER_PAGE}, depuis=int(l['depuis'] * 1000),
-             echeance=int(l['echeance'] * 1000) if l.get('echeance') else None, proche=bool(l.get('proche')))
+             echeance=int(l['echeance'] * 1000) if l.get('echeance') else None, proche=bool(l.get('proche')),
+             # what the page needs to place the ingestion's requests among these lines (« Ensuite », PM 2026-11-19)
+             urgence=(l.get('urgence') or (RANG_OUVERTE,))[0], recente=int((l.get('recente') or l['depuis']) * 1000))
     if l.get('reclassee'):
         # The PM moved it (reclassement switch on), and what the rules gave, for his undo: absent otherwise.
         r['reclassee'] = l['reclassee']

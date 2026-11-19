@@ -4,7 +4,7 @@
 
     python3 rangement.py lister [--heures N] [--json]   # dry run: every open session, kept or to archive, and why
     python3 rangement.py calculer                       # writes ~/Mon Studio/.parc/rangement.json (run detached)
-    python3 rangement.py hook                           # UserPromptSubmit: hands the list to a session of the PM
+    python3 rangement.py hook                           # UserPromptSubmit: keeps the list fresh, prints nothing
 
 The list is computed without a model, from the app's session cards and the transcripts (parc.py). A session is
 archived only when ALL of these hold; the first one that fails is the reason it stays:
@@ -19,12 +19,16 @@ archived only when ALL of these hold; the first one that fails is the reason it 
   - no session it started is still under way.
 Any doubt (unreadable card, transcript or folder) keeps the session.
 
-Who archives: the app refuses `archive_session` in a scheduled run nobody opened (tried 2026-11-16, both on another
-session and on itself: « needs a person's approval, and nobody has opened this scheduled run »). So the list is handed,
-at most every six hours, to the next top-level session of the PM by the UserPromptSubmit hook; Claude archives them
-there (auto mode approves; a person is present). Each archive leaves a line in `rangees` of rangement.json, which the
-page shows as « Rangées aujourd'hui ». Off with `install.py switch rangement off` (`"rangement_auto": false`), and
-silent once Mon Studio is disabled. Nothing here writes ~/.claude/settings.json.
+Who archives: the PM, from the board (PM, Q5, 2026-11-18). The app refuses `archive_session` in a scheduled run nobody
+opened (tried 2026-11-16: « needs a person's approval, and nobody has opened this scheduled run »), and in auto mode it
+refuses it too when the order comes from a hook's text handed to an unrelated session (2026-11-18, twice on the same
+session: « judged dangerous »). So nothing here hands an order to a session any more: the list is a line of Mon Studio,
+« N sessions finies à ranger », whose « Ranger » button copies a request in the PM's words (parc.texte_a_ranger) that he
+pastes in a session of his; his message is his consent. The sessions of a click are noted in .parc/ranger.json, and
+once archived they move to `rangees` of rangement.json, which the page shows as « Rangées aujourd'hui ». The stopped
+sessions the PM gave up (« Abandonner », .parc/abandonnees.json) join the same line. Off with `install.py switch
+rangement off` (`"rangement_auto": false`), and silent once Mon Studio is disabled. Nothing here writes
+~/.claude/settings.json.
 """
 import argparse
 import importlib.util
@@ -47,8 +51,7 @@ LOCK = INTERNAL / 'rangement.lock'
 
 HEURES_DEFAUT = 24
 RECALCUL_S = 3600          # the list is recomputed at most every hour, in the background
-CONFIE_S = 6 * 3600        # a list is handed to a session at most every six hours
-ESSAIS_MAX = 3             # a session handed this many times and still open is no longer handed (the app refuses it)
+RANGER_CLICS = INTERNAL / 'ranger.json'   # written by the connector: the sessions of a « Ranger » click
 GARDER_RANGEES_J = 30
 MARQUEUR = '[jetable]'
 BOITE = '📬'
@@ -299,23 +302,26 @@ def calculer(maintenant=None):
     allume, heures = reglages()
     ancien = lire_json(OUT, {}) or {}
     rangees = [r for r in ancien.get('rangees') or [] if maintenant - r.get('quand', 0) < GARDER_RANGEES_J * 86400]
-    confiees = ancien.get('confiees') or {}
     parc = charger_parc()
     archivees = {m['id']: m for m in parc.fiches({'fiches': {}}) if m['id'] and m['archivee']}
     deja = {r['id'] for r in rangees}
-    for sid, c in list(confiees.items()):
-        if sid in archivees and sid not in deja:
-            rangees.append({'id': sid, 'titre': archivees[sid]['titre'] or c.get('titre') or '', 'quand': maintenant,
-                            'raison': c.get('raison') or ''})
-        if sid in archivees or maintenant - c.get('quand', 0) > 7 * 86400:
-            confiees.pop(sid, None)
+    # The sessions of a « Ranger » click, and those handed to a session before 0.3.10 (`confiees`, no longer written):
+    # archived since, they enter `rangees` once; the others wait for the PM's click on the board.
+    clics = lire_json(RANGER_CLICS, {}) or {}
+    origines = dict(ancien.get('confiees') or {}, **(clics if isinstance(clics, dict) else {}))
+    for sid, c in origines.items():
+        c = c if isinstance(c, dict) else {}
+        if sid in archivees and sid not in deja and maintenant - (c.get('quand') or 0) < 7 * 86400:
+            deja.add(sid)
+            rangees.append({'id': sid, 'titre': archivees[sid]['titre'] or c.get('titre') or '',
+                            'quand': maintenant,
+                            'raison': c.get('raison') or 'bouton « Ranger » de Mon Studio'})
     a_ranger = []
     if allume:
         a_ranger = [{'id': f['id'], 'titre': f['titre'], 'raison': pourquoi}
                     for f, ok, pourquoi in releve(maintenant, parc) if ok]
     ecrire_atomique(OUT, {'calcule': maintenant, 'heures': heures, 'allume': allume, 'a_ranger': a_ranger,
-                          'confiees': confiees, 'rangees': rangees,
-                          'remis': ancien.get('remis', 0)})
+                          'rangees': rangees})
     return a_ranger
 
 
@@ -337,80 +343,19 @@ def lancer_calcul_detache():
                      start_new_session=True, close_fds=True)
 
 
-def session_du_pm(cli_id):
-    """The app id of a top-level session of the PM (no mother, not a scheduled run), read from parc's cache of
-    cards; None for any other session, or an unknown one (doubt)."""
-    cache = lire_json(INTERNAL / 'cache.json', {}) or {}
-    for ent in (cache.get('fiches') or {}).values():
-        m = (ent or {}).get('meta') or {}
-        if m.get('cli') == cli_id:
-            return m.get('id') if not m.get('parent') and not m.get('tache') and not m.get('archivee') else None
-    return None
-
-
-def consigne(liste):
-    lignes = '\n'.join(f"- {x['id']} ({x['titre']})" for x in liste)
-    return ("Mon Studio · rangement : ces sessions ont fini leur seule action, rendu leur rapport et n'attendent rien "
-            "du PM. Avant de répondre, archive-les sans demander, une par une, avec "
-            "mcp__ccd_session_mgmt__archive_session (raison « rangement Mon Studio ») ; si un appel est refusé et que "
-            "le refus cite une entrée avec un champ « session », renvoie-le une fois tel quel ; tout autre refus : passe "
-            "à la suivante sans insister. N'en parle qu'en une ligne avant la fin de ta réponse : « Rangé : N sessions "
-            "finies (Mon Studio). »\n" + lignes)
-
-
-ABANDONNEES = INTERNAL / 'abandonnees.json'   # written by the connector: « Abandonner » on a stopped session's line
-
-
-def abandonnees(maintenant):
-    """[{id, titre, raison}] of the stopped sessions the PM gave up on the board (« Abandonner », PM 2026-11-17), not
-    archived yet, for 7 days at most. The PM asked: they go even when the automatic rangement is off."""
-    a = lire_json(ABANDONNEES, {}) or {}
-    cache = lire_json(INTERNAL / 'cache.json', {}) or {}
-    archivees = {((ent or {}).get('meta') or {}).get('id') for ent in (cache.get('fiches') or {}).values()
-                 if ((ent or {}).get('meta') or {}).get('archivee')}
-    a = {k: v for k, v in a.items() if k not in archivees} if isinstance(a, dict) else {}
-    return [{'id': sid, 'titre': (x or {}).get('titre') or '', 'raison': 'abandonnée par le PM depuis Mon Studio'}
-            for sid, x in a.items() if isinstance(a, dict) and str(sid).startswith('local_')
-            and maintenant - ((x or {}).get('quand') or 0) < 7 * 86400]
-
-
 def hook(entree, maintenant=None):
-    """What the UserPromptSubmit hook prints (empty string: nothing)."""
+    """The UserPromptSubmit hook: starts the computation in the background when the list is more than an hour old, and
+    prints nothing. Until 0.3.9 it handed the list to the PM's next top-level session as an order to archive; the app
+    refuses that order in auto mode (it comes from a hook, not from the PM), so the list is now a line of the board
+    with its « Ranger » button (PM, Q5, 2026-11-18)."""
     maintenant = maintenant or time.time()
     allume, _ = reglages()
-    etat_cockpit = lire_json(STATE)
-    if not isinstance(etat_cockpit, dict) or etat_cockpit.get('disabled'):
+    if not allume:
         return ''
     etat = lire_json(OUT, {}) or {}
-    if allume and maintenant - (etat.get('calcule') or 0) > RECALCUL_S:
+    if maintenant - (etat.get('calcule') or 0) > RECALCUL_S:
         lancer_calcul_detache()
-    cli = (entree or {}).get('session_id')
-    ici = session_du_pm(cli) if cli else None
-    if not ici:
-        return ''
-    confiees = etat.get('confiees') or {}
-    # A session handed less than six hours ago waits for its archive; one handed earlier and still open (the receiving
-    # session did not archive it, PM 2026-11-18) is handed again, ESSAIS_MAX times at most.
-    attente = {sid for sid, c in confiees.items()
-               if maintenant - c.get('quand', 0) < CONFIE_S or c.get('essais', 1) >= ESSAIS_MAX}
-    # An abandoned session is handed at the next message, without the six hours' wait.
-    abandon = [x for x in abandonnees(maintenant) if x['id'] not in attente and x['id'] != ici]
-    if not abandon and (not allume or (confiees and maintenant - max(c.get('quand', 0) for c in confiees.values()) < CONFIE_S)):
-        return ''
-    deja = {x['id'] for x in abandon}
-    liste = (abandon + [x for x in (etat.get('a_ranger') or [] if allume else [])
-                        if x.get('id') not in attente and x.get('id') != ici and x.get('id') not in deja])[:20]
-    if not liste:
-        return ''
-    for x in liste:
-        essais = (confiees.get(x['id']) or {}).get('essais', 1 if x['id'] in confiees else 0) + 1
-        confiees[x['id']] = {'quand': maintenant, 'titre': x.get('titre'), 'raison': x.get('raison'), 'a': cli,
-                             'essais': essais}
-    etat['confiees'] = confiees
-    etat['remis'] = (etat.get('remis') or 0) + 1
-    ecrire_atomique(OUT, etat)
-    return consigne(liste)
-
+    return ''
 
 def lister(heures=None, en_json=False, maintenant=None):
     maintenant = maintenant or time.time()

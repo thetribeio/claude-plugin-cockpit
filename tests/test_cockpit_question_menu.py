@@ -383,7 +383,8 @@ class RawLines(unittest.TestCase):
             outils = home / 'Mon Studio/.parc'
             outils.mkdir(parents=True)
             shutil.copy(SCRIPTS / 'parc.py', outils / 'parc.py')
-            env = dict(os.environ, HOME=str(home))
+            # a macOS layout on any OS: the child process is told where the app keeps its cards
+            env = dict(os.environ, HOME=str(home), MON_STUDIO_APP_SESSIONS=str(cards.parent.parent))
             out = subprocess.run([sys.executable, '-I', str(SCRIPTS / 'lignes-brutes.py'), 'Essai'],
                                  check=True, capture_output=True, text=True, env=env).stdout
             self.assertIn(Q12 + ' : ' + Q12_SUITE, out)

@@ -1038,13 +1038,13 @@ def plan():
     lines.append('ajouterait dans chaque session : la consigne de numéroter les questions au PM (dans un projet suivi), '
                  'le rappel de finir par « À trancher » ou « Rien à faire de ton côté », et l\'alerte de session lourde '
                  '(au-delà de 300 000 tokens)')
-    # Two things that act without the PM, announced before the go (final review, Q3, 2026-11-18).
+    # Announced before the go (final review, Q3, 2026-11-18): the rangement (archived only on the PM's « Ranger » since 0.3.10) and the model check.
     state = read_json(STATE, {}) or {}
     if s['rangementAuto']:
-        lines.append(f"rangerait sans toi les sessions finies d'une seule action (lancées par une autre session ou "
-                     f"marquées « [jetable] », rien à trancher, inactives depuis {s['rangementHeures']} h) : archivées "
-                     "dans la prochaine session où tu écris, rouvrables depuis « Archivées » ; « coupe le rangement » "
-                     "l'arrête")
+        lines.append(f"montrerait sous le tableau les sessions finies d'une seule action (lancées par une autre session "
+                     f"ou marquées « [jetable] », rien à trancher, inactives depuis {s['rangementHeures']} h) : son "
+                     "bouton « Ranger » copie la demande d'archivage, que tu colles dans une session ; rien n'est "
+                     "archivé sans ce message de toi ; « coupe le rangement » l'arrête")
     if state.get('controle_modele') is not False:
         lines.append('refuserait un lancement de session ou de sous-agent sans modèle choisi, jusqu\'à ce que Claude '
                      'le relance avec le modèle du barème (sessions de l\'app seulement ; « coupe le contrôle du modèle » '

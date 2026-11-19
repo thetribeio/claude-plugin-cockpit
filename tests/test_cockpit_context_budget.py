@@ -13,7 +13,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 # Bytes of UTF-8 text, about 3.7 per token in French.
-RULES_TOTAL = 9_800          # regles/*.md, given at the start of every session (9,741 in 0.3.2: rule 2 of the answer format and its example, short titles)
+RULES_TOTAL = 10_000         # regles/*.md, given at the start of every session (9,741 in 0.3.2; 9,906 in 0.3.10: rule 4 says the app's end-of-turn card starts with the same « Qn · titre »)
 OPTIONAL_RULE = 1_500        # one rule of regles/optionnelles/, given only when the PM turned it on
 SKILL_DESCRIPTIONS = 1_700   # the descriptions listed in every session, all skills together (1,516 on 2026-11-17)
 EACH_MESSAGE = 240           # what a UserPromptSubmit hook echoes at every message of the PM, kept until the session ends

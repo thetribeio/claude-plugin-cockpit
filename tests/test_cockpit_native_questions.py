@@ -60,7 +60,7 @@ class NativeQuestion(unittest.TestCase):
         self.assertEqual(res['recap'], 'Le brouillon est prêt.')
         self.assertEqual([l['lecture'] for l in lines], ['native'])
         self.assertEqual(lines[0]['titre'], 'Je reprends la fin du passage vers 8h ?')
-        self.assertIn('Oui', lines[0]['suite'])
+        self.assertEqual(lines[0]['choix'], ['Oui', 'Non'])   # buttons, no longer grey text (2026-11-18)
         self.assertFalse(lines[0]['bloque'])
         self.assertNotIn(parc.A_VERIFIER_SUITE, [l['suite'] for l in lines])
 

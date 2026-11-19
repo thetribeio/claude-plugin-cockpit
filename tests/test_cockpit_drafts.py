@@ -179,6 +179,9 @@ class CatchUp(HookBase):
         self.env.pop('CLAUDE_CODE_HOST_SESSION_ID')
         self.env.update(MON_STUDIO_TRANSCRIPTS=str(self.transcripts), MON_STUDIO_APP_SESSIONS=str(self.app))
         self.now = time.time()
+        mac = mock.patch('sys.platform', 'darwin')  # these tests assume macOS: say so, whatever runs them
+        mac.start()
+        self.addCleanup(mac.stop)
 
     def stamp(self, days_ago):
         return dt.datetime.fromtimestamp(self.now - days_ago * 86400, dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')

@@ -214,24 +214,21 @@ class Folder(unittest.TestCase):
 
 
 class Hook(unittest.TestCase):
+    """Since 0.3.10 (PM, Q5, 2026-11-18) the hook never hands an order to archive to a session: the app refuses it in
+    auto mode. It only keeps the list fresh, in the background."""
     def setUp(self):
         self.ms = pathlib.Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.ms)
         (self.ms / '.parc').mkdir()
-        self.anciens = {k: getattr(rg, k) for k in ('MON_STUDIO', 'INTERNAL', 'STATE', 'OUT', 'LOCK',
-                                                    'lancer_calcul_detache')}
+        self.anciens = {k: getattr(rg, k) for k in ('MON_STUDIO', 'INTERNAL', 'STATE', 'OUT', 'LOCK', 'RANGER_CLICS',
+                                                    'lancer_calcul_detache', 'charger_parc')}
         rg.MON_STUDIO, rg.INTERNAL = self.ms, self.ms / '.parc'
         rg.STATE, rg.OUT, rg.LOCK = rg.INTERNAL / 'cockpit.json', rg.INTERNAL / 'rangement.json', rg.INTERNAL / 'r.lock'
+        rg.RANGER_CLICS = rg.INTERNAL / 'ranger.json'
         self.lancements = []
         rg.lancer_calcul_detache = lambda: self.lancements.append(1)
         self.etat({})
-        cartes = {'a': {'cli': 'cli-pm', 'id': 'local_pm', 'parent': None, 'tache': None, 'archivee': False},
-                  'b': {'cli': 'cli-fille', 'id': 'local_fille', 'parent': 'local_pm', 'tache': None, 'archivee': False},
-                  'c': {'cli': 'cli-tache', 'id': 'local_tache', 'parent': None, 'tache': 'point-du-matin',
-                        'archivee': False}}
-        (rg.INTERNAL / 'cache.json').write_text(json.dumps({'fiches': {k: {'meta': v} for k, v in cartes.items()}}))
-        self.liste([{'id': 'local_x', 'titre': 'Alpha · Essai', 'raison': 'r'},
-                    {'id': 'local_pm', 'titre': 'Alpha · Fil', 'raison': 'r'}])
+        self.liste([{'id': 'local_x', 'titre': 'Alpha · Essai', 'raison': 'r'}])
 
     def tearDown(self):
         for k, v in self.anciens.items():
@@ -241,40 +238,19 @@ class Hook(unittest.TestCase):
         rg.STATE.write_text(json.dumps(d))
 
     def liste(self, a_ranger, **kw):
-        rg.OUT.write_text(json.dumps(dict({'calcule': NOW, 'a_ranger': a_ranger, 'confiees': {}, 'rangees': []}, **kw)))
+        rg.OUT.write_text(json.dumps(dict({'calcule': NOW, 'a_ranger': a_ranger, 'rangees': []}, **kw)))
 
-    def test_hands_the_list_once_to_a_pm_session_never_itself(self):
-        texte = rg.hook({'session_id': 'cli-pm'}, NOW)
-        self.assertIn('local_x', texte)
-        self.assertNotIn('local_pm', texte)
-        self.assertIn('archive_session', texte)
-        self.assertEqual(rg.hook({'session_id': 'cli-pm'}, NOW + 60), '')
-        self.assertIn('local_x', json.loads(rg.OUT.read_text())['confiees'])
-
-    def test_a_session_handed_but_still_open_is_handed_again_after_six_hours(self):
-        self.assertIn('local_x', rg.hook({'session_id': 'cli-pm'}, NOW))
-        self.assertEqual(rg.hook({'session_id': 'cli-pm'}, NOW + 5 * 3600), '')
-        texte = rg.hook({'session_id': 'cli-pm'}, NOW + 7 * 3600)
-        self.assertIn('local_x', texte)
-        self.assertEqual(json.loads(rg.OUT.read_text())['confiees']['local_x']['essais'], 2)
-
-    def test_after_three_tries_it_is_no_longer_handed(self):
-        rg.hook({'session_id': 'cli-pm'}, NOW)
-        rg.hook({'session_id': 'cli-pm'}, NOW + 7 * 3600)
-        self.assertIn('local_x', rg.hook({'session_id': 'cli-pm'}, NOW + 14 * 3600))
-        self.assertEqual(rg.hook({'session_id': 'cli-pm'}, NOW + 21 * 3600), '')
-
-    def test_a_hand_off_from_before_the_tries_counter_counts_as_one(self):
-        self.liste([{'id': 'local_x', 'titre': 'Alpha · Essai', 'raison': 'r'}],
-                   confiees={'local_x': {'quand': NOW - 8 * 3600, 'titre': 'Alpha · Essai'}})
-        self.assertIn('local_x', rg.hook({'session_id': 'cli-pm'}, NOW))
-        self.assertEqual(json.loads(rg.OUT.read_text())['confiees']['local_x']['essais'], 2)
-
-    def test_not_to_a_daughter_a_scheduled_run_or_an_unknown_session(self):
-        for cli in ('cli-fille', 'cli-tache', 'cli-inconnue', None):
-            self.assertEqual(rg.hook({'session_id': cli}, NOW), '', cli)
+    def test_never_hands_an_order_to_a_session(self):
+        for cli in ('cli-pm', 'cli-fille', None):
+            self.assertEqual(rg.hook({'session_id': cli}, NOW), '')
+            self.assertEqual(rg.hook({'session_id': cli}, NOW + 7 * 3600 + 60), '')
+        self.assertNotIn('confiees', json.loads(rg.OUT.read_text()))
+        src = (ROOT / 'hooks' / 'rangement.py').read_text(encoding='utf-8')
+        self.assertNotIn('def consigne', src)
+        self.assertNotIn('archive-les', src)
 
     def test_switch_off_and_disabled_say_nothing(self):
+        self.liste([], calcule=NOW - 2 * 3600)
         self.etat({'rangement_auto': False})
         self.assertEqual(rg.hook({'session_id': 'cli-pm'}, NOW), '')
         self.etat({'disabled': True})
@@ -284,8 +260,11 @@ class Hook(unittest.TestCase):
     def test_not_installed_says_nothing(self):
         rg.STATE.unlink()
         self.assertEqual(rg.hook({'session_id': 'cli-pm'}, NOW), '')
+        self.assertEqual(self.lancements, [])
 
     def test_stale_list_starts_a_background_computation(self):
+        self.assertEqual(rg.hook({'session_id': 'cli-pm'}, NOW + 60), '')
+        self.assertEqual(self.lancements, [])
         self.liste([], calcule=NOW - 2 * 3600)
         self.assertEqual(rg.hook({'session_id': 'cli-pm'}, NOW), '')
         self.assertEqual(self.lancements, [1])
@@ -295,6 +274,32 @@ class Hook(unittest.TestCase):
         self.assertEqual(rg.reglages(), (True, 6))
         self.etat({})
         self.assertEqual(rg.reglages(), (True, 24))
+
+    def calculer_avec(self, archivees):
+        class Parc:
+            @staticmethod
+            def fiches(_cache):
+                return [{'id': sid, 'titre': 'Alpha · ' + sid, 'archivee': True} for sid in archivees]
+        rg.charger_parc = lambda: Parc
+        self.etat({'rangement_auto': False})   # no reading of the app: the bookkeeping alone
+        rg.calculer(NOW)
+        return json.loads(rg.OUT.read_text())
+
+    def test_a_clicked_session_once_archived_is_put_away_once(self):
+        rg.RANGER_CLICS.write_text(json.dumps({'local_x': {'titre': 'Alpha · Essai', 'quand': NOW - 600},
+                                               'local_y': {'titre': 'Alpha · Autre', 'quand': NOW - 600}}))
+        r = self.calculer_avec(['local_x'])
+        self.assertEqual([x['id'] for x in r['rangees']], ['local_x'])
+        self.assertIn('Ranger', r['rangees'][0]['raison'])
+        r = self.calculer_avec(['local_x'])
+        self.assertEqual([x['id'] for x in r['rangees']], ['local_x'])   # once
+
+    def test_an_old_click_or_hand_off_is_forgotten(self):
+        rg.RANGER_CLICS.write_text(json.dumps({'local_x': {'titre': 'Alpha · Essai', 'quand': NOW - 8 * 86400}}))
+        self.liste([], confiees={'local_y': {'quand': NOW - 3600, 'titre': 'Alpha · Remise'}})
+        r = self.calculer_avec(['local_x', 'local_y'])
+        self.assertEqual([x['id'] for x in r['rangees']], ['local_y'])   # a hand-off of 0.3.9 still counts once
+        self.assertNotIn('confiees', r)
 
 
 class Trace(unittest.TestCase):
@@ -312,6 +317,21 @@ class Trace(unittest.TestCase):
         r = parc.rangees_du_jour(maintenant)
         self.assertEqual([x['id'] for x in r], ['local_a'])
         self.assertEqual(r[0]['titre'], 'Alpha · Essai')
+
+    def test_a_clicked_session_shows_as_soon_as_its_card_says_archived(self):
+        ms = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, ms)
+        (ms / '.parc').mkdir()
+        ancien = parc.INTERNE
+        parc.INTERNE = ms / '.parc'
+        self.addCleanup(setattr, parc, 'INTERNE', ancien)
+        maintenant = time.time()
+        (ms / '.parc' / 'ranger.json').write_text(json.dumps({
+            'local_a': {'titre': 'Alpha · Essai', 'quand': maintenant - 60},
+            'local_b': {'titre': 'Alpha · Ouverte', 'quand': maintenant - 60}}))
+        metas = [{'id': 'local_a', 'archivee': True}, {'id': 'local_b', 'archivee': False}]
+        self.assertEqual([x['id'] for x in parc.rangees_du_jour(maintenant, metas)], ['local_a'])
+        self.assertEqual(parc.rangees_du_jour(maintenant), [])
 
     def test_page_has_the_block(self):
         page = (ROOT / 'skills' / 'mon-studio' / 'assets' / 'page-servie.html').read_text(encoding='utf-8')

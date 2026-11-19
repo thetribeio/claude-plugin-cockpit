@@ -497,8 +497,9 @@ class Page(unittest.TestCase):
         self.assertIn(f'data-sid="{ASKER}"', avant)
         self.assertIn('data-retirer="cccccccccccc"', avant)
         self.assertNotIn('Q5 · Format', avant)
-        # The click only greys the row out for 10 s (the timer never fires here): « clore » is not called yet.
-        self.assertEqual([a for a in out['appels'] if a[0] == 'clore'], [])
+        # « clore » leaves at the click (a reload within the 10 s lost it before); the row greys out for 10 s with
+        # « Annuler » (the timer never fires here).
+        self.assertEqual([a for a in out['appels'] if a[0] == 'clore'], [['clore', {'cle': 'cccccccccccc'}]])
         self.assertIn(10000, out['minuteurs'])
         self.assertNotIn('data-retirer="cccccccccccc"', h)
         self.assertIn('data-annuler="cccccccccccc"', h)

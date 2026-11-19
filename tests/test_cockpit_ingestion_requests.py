@@ -177,9 +177,10 @@ class Page(unittest.TestCase):
 
     def test_each_request_is_a_main_table_row_sorted_close_due_date_then_newest(self):
         # PM, Q37 of 2026-11-06: a close deadline first, then the newest; a far deadline does not reorder.
+        # PM, 2026-11-19 (Q3): each request in the block of its Studio; Beta (its newest is 1 h old) before Alpha (1 day).
         out = self.run_page(outils=['lignes', 'clore'])
         t = out['tableau']
-        order = [t.index(x) for x in ('Envoyer le devis', 'Valider la maquette', 'Relire &lt;le&gt; planning', 'Caler le point')]
+        order = [t.index(x) for x in ('Envoyer le devis', 'Caler le point', 'Valider la maquette', 'Relire &lt;le&gt; planning')]
         self.assertEqual(order, sorted(order))
         import datetime as dt
         demain = (dt.date.today() + dt.timedelta(days=1)).isoformat()
@@ -240,6 +241,20 @@ class Page(unittest.TestCase):
         self.assertIn('Envoyer le devis', out['projetQuestions'])
         self.assertTrue(out['boiteCachee'])
 
+    def test_the_project_view_orders_requests_with_questions(self):
+        # PM, 2026-11-19 (Q3): the project view no longer puts the ingestion's requests on top; a question of 10 min
+        # comes before a request of 1 h, which comes before one of 3 days.
+        now = int(time.time() * 1000)
+        q = {'studio': 'Beta', 'session': 'Backlog', 'cle': 'local_00000000-0000-0000-0000-0000000000b1', 'lien': '',
+             'type': 'decision', 'verbe': 'Répondre', 'affiche_titre': 'Question fraîche', 'affiche_suite': '',
+             'bloque': False, 'proche': False, 'impact': 'normal', 'raison': '', 'effort': '', 'projet': '/S/Beta',
+             'depuis': now - 600000, 'recente': now - 600000, 'urgence': 2}
+        vue = {'nom': 'Beta', 'questions': [q], 'sujets': [], 'anciennes': [], 'journal': [], 'tiers': []}
+        t = self.run_page(outils=['lignes', 'projet'], projet=vue, projetFixe='/S/Beta')['projetQuestions']
+        places = [t.find(x) for x in ('Question fraîche', 'Envoyer le devis', 'Caler le point')]
+        self.assertNotIn(-1, places)
+        self.assertEqual(places, sorted(places))
+
     def test_no_clore_tool_no_button(self):
         self.assertNotIn('data-clore', self.run_page(outils=['lignes'])['tableau'])
 
@@ -273,6 +288,9 @@ class RelayMarker(unittest.TestCase):
         env = mock.patch.dict(os.environ, {'MON_STUDIO': str(home / 'Mon Studio')})
         env.start()
         self.addCleanup(env.stop)
+        mac = mock.patch('sys.platform', 'darwin')  # these tests assume macOS: say so, whatever runs them
+        mac.start()
+        self.addCleanup(mac.stop)
         with mock.patch.object(pathlib.Path, 'home', return_value=home):
             spec = importlib.util.spec_from_file_location('install_relais_essai', INSTALL)
             self.i = importlib.util.module_from_spec(spec)

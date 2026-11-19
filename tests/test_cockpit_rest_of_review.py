@@ -113,7 +113,7 @@ class OldLines(unittest.TestCase):
         r = run_page(lignes=[arretee], cliquer=[['data-abandonner', 'r00000000000a']])
         self.assertIn('>Abandonner</button>', r['tableauAvant'])
         self.assertNotIn('Fait / Retirer du tableau', r['tableauAvant'])
-        self.assertIn('la session sera archivée', r['tableau'])
+        self.assertIn('la session passe dans « À ranger »', r['tableau'])
         self.assertNotIn('Abandonner', run_page(lignes=[ligne(arret='interrupted', cle=SID)])['tableau'])
 
     def test_the_old_lines_count_without_those_already_retired(self):

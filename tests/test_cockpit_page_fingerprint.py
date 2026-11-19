@@ -50,6 +50,9 @@ class Fingerprint(unittest.TestCase):
         self.env = mock.patch.dict(os.environ, env)
         self.env.start()
         self.i = load_install(env)
+        mac = mock.patch('sys.platform', 'darwin')  # these tests assume macOS: say so, whatever runs them
+        mac.start()
+        self.addCleanup(mac.stop)
         self.page = self.root / 'page-servie.html'
         shutil.copyfile(TEMPLATE, self.page)
         self.i.PAGE_SOURCE = self.page   # every change below is made on this copy, never on the template

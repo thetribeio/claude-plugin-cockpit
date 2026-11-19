@@ -51,6 +51,9 @@ class Install(unittest.TestCase):
         self.env = mock.patch.dict(os.environ, env)
         self.env.start()
         self.i = load_install(env)
+        mac = mock.patch('sys.platform', 'darwin')  # these tests assume macOS: say so, whatever runs them
+        mac.start()
+        self.addCleanup(mac.stop)
         self.i.APP_SESSIONS.mkdir(parents=True)
         self.i.INTERNAL.mkdir(parents=True)
         self.i.record_state(version=self.i.plugin_version(), page=MAIN, pageSha=self.i.page_sha(),

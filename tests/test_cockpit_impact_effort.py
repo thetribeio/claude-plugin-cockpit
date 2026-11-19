@@ -169,6 +169,9 @@ class BoardLines(unittest.TestCase):
         self.assertFalse(lines['Q1']['hors_studio'])
         page = board_tests.parc.rang_page(lines['Q1'])
         self.assertEqual((page['impact'], page['raison'], page['effort'], page['hors_studio']), ('fort', 'échéance', '', False))
+        # The page places the ingestion's requests among these lines with their urgency and recency (« Ensuite »).
+        self.assertEqual(page['urgence'], lines['Q1']['urgence'][0])
+        self.assertEqual(page['recente'], int(lines['Q1']['recente'] * 1000))
 
 
 def run_page(**entree):
@@ -203,8 +206,15 @@ class Page(unittest.TestCase):
         self.assertEqual(places, sorted(places), titres)
 
     def test_three_bands(self):
-        out = run_page(lignes=[ligne('Question ordinaire'), ligne('Question du dépôt', studio='Outil', hors_studio=True),
-                               ligne('Question du Studio B', studio='Beta'),
+        # « Ensuite » (PM, 2026-11-19): one order, whatever the folder (Q2) and wherever the line comes from (Q3). The
+        # fresh line of a folder that is not a Studio leads; the request « À toi » joins the block of its Studio, whose
+        # most recent line it is; Beta, older, comes last.
+        il_y_a = lambda s: int((NOW - s) * 1000)
+        out = run_page(lignes=[ligne('Question ordinaire', depuis=il_y_a(86400), recente=il_y_a(86400), urgence=2),
+                               ligne('Question du dépôt', studio='Outil', hors_studio=True, depuis=il_y_a(300),
+                                     recente=il_y_a(300), urgence=2),
+                               ligne('Question du Studio B', studio='Beta', depuis=il_y_a(7200), recente=il_y_a(7200),
+                                     urgence=2),
                                ligne('Production arrêtée', impact='fort', raison='bloqué'),
                                ligne('Go attendu', impact='fort', raison='client attend', effort='court'),
                                ligne('Archiver cette session', impact='faible', raison='rangement')],
@@ -212,8 +222,8 @@ class Page(unittest.TestCase):
                            demande('Ana demande un accès', impact='fort', raison='Ana attend'),
                            demande('Caler le point', cle='b' * 12)]}], 'studios': ['Alpha']})
         t = out['tableau']
-        self.order(t, "D'abord", 'Go attendu', 'Ana demande un accès', 'Production arrêtée', 'Ensuite', 'Caler le point',
-                   'Question ordinaire', 'Question du Studio B', 'Question du dépôt')
+        self.order(t, "D'abord", 'Go attendu', 'Ana demande un accès', 'Production arrêtée', 'Ensuite', 'Question du dépôt',
+                   'Caler le point', 'Question ordinaire', 'Question du Studio B')
         self.assertIn('D\'abord <span class="n">· 3</span>', t)
         self.assertIn('Ensuite <span class="n">· 4</span>', t)
         self.assertIn('<span class="raison">client attend</span><span class="raison court">réponse courte</span>', t)

@@ -218,11 +218,15 @@ class Page(unittest.TestCase):
         self.assertIn('Fait / Retirer du tableau', r['tableauAvant'])
         self.assertIn('retirée du tableau', r['tableau'])
         self.assertIn('data-annuler="r00000000000a"', r['tableau'])
-        self.assertNotIn('clore', [a[0] for a in r['appels']])   # nothing sent before the 10 s
+        # Sent at the click (2026-11-18: sent after the 10 s, a reload in between lost it); the timer never fires here.
+        self.assertIn(['clore', {'cle': 'r00000000000a'}], r['appels'])
         self.assertIn(10000, r['minuteurs'])
         r = run_page(lignes=[ligne()], cliquer=[['data-retirer', 'r00000000000a'], ['data-annuler', 'r00000000000a']])
         self.assertNotIn('retirée du tableau', r['tableau'])
         self.assertIn('Fait / Retirer du tableau', r['tableau'])
+        # « Annuler » reopens what the click closed.
+        self.assertEqual([a for a in r['appels'] if a[0] == 'clore'],
+                         [['clore', {'cle': 'r00000000000a'}], ['clore', {'cle': 'r00000000000a', 'rouvrir': True}]])
 
     def test_one_click_band_is_honest(self):
         vieux = int(time.time() * 1000) - 3 * 86400000

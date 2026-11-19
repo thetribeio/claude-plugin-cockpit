@@ -79,7 +79,7 @@ const tick = async () => { for (let i = 0; i < 20; i++) await new Promise((r) =>
   const lignes = entree.lignes.map((l) => Object.assign({}, l, { depuis: l.depuis || now - 3600000 }));
   const page = { genere: now, pastilles_lues: true, lignes, anciennes: [], fils_rouges: entree.fils_rouges || [], projets: entree.projets || [],
     liste_projets: entree.liste_projets || null, matin: entree.matin || null, lecture_app: entree.lecture_app || undefined,
-    mise_en_route: entree.mise_en_route || undefined, conflits: entree.conflits, rangees: entree.rangees || [],
+    mise_en_route: entree.mise_en_route || undefined, conflits: entree.conflits, rangees: entree.rangees || [], a_ranger: entree.a_ranger || [], ranger_texte: entree.ranger_texte || '',
     sans_action: entree.sans_action || [], plus_tard: entree.plus_tard || {}, reclassement: entree.reclassement || undefined };
   if (veilles.lignes) veilles.lignes({ type: 'data', result: { payload: page } });   // none when the code was not served
   if (veilles.autorisations && entree.autorisations) veilles.autorisations({ type: 'data', result: { payload: entree.autorisations } });
@@ -132,6 +132,7 @@ const tick = async () => { for (let i = 0; i < 20; i++) await new Promise((r) =>
     titreDocument: doc.title, titrePage: g('titre-page').textContent || '', tousProjetsHidden: !!g('tous-projets').hidden,
     studiosHidden: !!g('studios').hidden,
     rangeesVisibles: !g('bloc-rangees').hidden && (g('bloc-rangees').style || {}).display !== 'none',
+    aRanger: g('a-ranger').innerHTML || '', aRangerHidden: !!g('bloc-a-ranger').hidden, aRangerTitre: g('a-ranger-titre').textContent || '',
     ongletProjet: g('projet-onglet-projet').innerHTML || '', ongletProjetLabel: (g('projet-onglet-projet').attrs || {})['aria-label'] || '',
     sujetsReplies: (g('projet-sujets').style || {}).display === 'none', journalReplie: (g('projet-journal').style || {}).display === 'none',
     sujetsOuvert: (g('projet-sujets-bascule').attrs || {})['aria-expanded'] || '', stockageLu: stockage,

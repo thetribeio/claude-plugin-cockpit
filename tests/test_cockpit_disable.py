@@ -48,6 +48,9 @@ class Disable(unittest.TestCase):
         self.env = mock.patch.dict(os.environ, env)
         self.env.start()
         os.environ.pop('MON_STUDIO', None)
+        mac = mock.patch('sys.platform', 'darwin')  # these tests assume macOS: say so, whatever runs them
+        mac.start()
+        self.addCleanup(mac.stop)
         self.install = load('install', env)
         i = self.install
         i.APP_SESSIONS.mkdir(parents=True)

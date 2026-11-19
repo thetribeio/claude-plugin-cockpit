@@ -208,8 +208,8 @@ class ShortTitlePage(unittest.TestCase):
         self.assertEqual(r.count('Relis la proposition de tri'), 2, 'the title, then the full text, not the title twice')
         self.assertIn('au plus tard demain matin', r)
         self.assertIn('<code>/studio:auto-ingest tri</code>', r)
-        self.assertIn('Relevé par l&#39;ingestion le ', r)
-        self.assertEqual(r.count('Relevé par l&#39;ingestion'), 2, 'the Session column, then the source once')
+        self.assertNotIn('Relevé par l&#39;ingestion', r, 'never a name that is not a session')
+        self.assertEqual(r.count('projet/.ingestion-auto-state.json'), 2, 'the Session column, then the source once')
         self.assertNotIn('Déclencheur', r)
 
 

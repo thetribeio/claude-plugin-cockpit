@@ -14,7 +14,8 @@ tokens. Les outils :
                    des conflits du Studio et la session « <Projet> · Conflits Studio » (projets.conflits_du_projet), null
                    si leur lecture échoue (lecture seule)
     ouvrir         ouvre une session dans l'app (`open claude://…`) ; pas en lecture seule (il lance `open` et peut
-                   écrire le presse-papiers) ; avec `copier`, met d'abord
+                   écrire le presse-papiers) ; avec `ranger`, copie seulement la demande d'archivage des sessions
+                   finies (bouton « Ranger », PM Q5 2026-11-18), que le PM colle lui-même ; avec `copier`, met d'abord
                    le numéro de la question (« Q10 »), ou une réponse fermée (« Q10 go »), dans le presse-papiers, à coller.
                    Avec `dossier` et `fichier` au lieu de `id`, ouvre un document d'un Studio connu de ce Mac dans son
                    application (`open`), pour le bouton « Fichier » du point du matin : extensions de documents
@@ -38,7 +39,8 @@ tokens. Les outils :
     clore          ferme à la main une ligne de la liste par projet (« Fait / plus d'actu » au tableau, « Fait » dans
                    Today), par sa clé : ce qu'aucune source ne voit ; avec `matin: true`, marque « Fait », pour de bon,
                    un élément « à traiter » ou « préparer demain » du point du matin, ou un brouillon pas envoyé (pas en
-                   lecture seule). Seul un clic du PM sur la page l'appelle.
+                   lecture seule) ; avec `rouvrir: true`, annule une fermeture faite par la page il y a moins d'une
+                   minute (« Annuler »). Seul un clic du PM sur la page l'appelle.
     matin_ecrire   pour les deux tâches planifiées du point du matin : remplace ~/Mon Studio/matin.json par l'objet
                    `contenu`, après la vérification de `matin.py ecrire` (objet JSON, `genere_le` lisible), et rien
                    d'autre (pas en lecture seule). Autorisé par la règle `mcp__mon-studio__matin_ecrire`, que seul
@@ -162,11 +164,14 @@ OUTILS = [
                     "sans « id », seulement la commande d'une étape de la mise en route, copiée. "
                     "Avec « dossier » (un Studio de ce Mac) et « fichier » (un chemin relatif à ce Studio) au lieu de "
                     "« id », ouvre ce document (md, pdf, docx, xlsx, image…) dans son application ; tout autre type est refusé. "
+                    "Avec « ranger » (bouton « Ranger » de la page), copie la demande d'archivage des sessions finies, "
+                    "écrite par le Mac, que le PM collera lui-même dans une session ; n'archive rien. "
                     "Ne modifie rien d'autre.",
      'inputSchema': {'type': 'object', 'properties': {'id': {'type': 'string', 'pattern': r'^local_[0-9a-f-]{36}$'},
                                                       'copier': {'type': 'string', 'pattern': COPIE_MOTIF},
                                                       'dossier': {'type': 'string', 'minLength': 1, 'maxLength': 1000},
-                                                      'fichier': {'type': 'string', 'minLength': 1, 'maxLength': 500}},
+                                                      'fichier': {'type': 'string', 'minLength': 1, 'maxLength': 500},
+                                                      'ranger': {'type': 'boolean'}},
                      'additionalProperties': False},
      'annotations': {'title': 'Ouvrir une session', 'readOnlyHint': False, 'destructiveHint': False, 'idempotentHint': True,
                      'openWorldHint': False}},
@@ -221,13 +226,14 @@ OUTILS = [
                     "clé « etape-… », écarte une étape de la mise en route (« Pas pour moi »). Une clé « t… » "
                     "marque reçue une attente de tiers (« Reçu »). Avec « plus_tard », masque la ligne jusqu'à demain, "
                     "sur le tableau seulement, sans rien envoyer à la session. Avec « abandon » (clé « r… » d'une "
-                    "session arrêtée), retire la ligne et propose la session à l'archivage. Avec « reclasser » (dabord, "
+                    "session arrêtée), retire la ligne et propose la session à l'archivage. Avec « rouvrir », annule "
+                    "(« Annuler ») une fermeture faite par la page il y a moins d'une minute. Avec « reclasser » (dabord, "
                     "ensuite, annuler), ne ferme rien : met la ligne dans « D'abord » ou hors de « D'abord » au tableau, "
                     "ou annule, quand l'interrupteur « reclassement » est allumé. Réservé "
                     "à la page : appelé sur un clic du PM, jamais par une session.",
      'inputSchema': {'type': 'object', 'properties': {'cle': {'type': 'string', 'minLength': 1, 'maxLength': 80},
                                                       'matin': {'type': 'boolean'}, 'plus_tard': {'type': 'boolean'},
-                                                      'abandon': {'type': 'boolean'},
+                                                      'abandon': {'type': 'boolean'}, 'rouvrir': {'type': 'boolean'},
                                                       'reclasser': {'type': 'string', 'enum': ['dabord', 'ensuite', 'annuler']}},
                      'required': ['cle'], 'additionalProperties': False},
      'annotations': {'title': 'Fermer une ligne de projet', 'readOnlyHint': False, 'destructiveHint': False,
@@ -396,7 +402,7 @@ def _lignes():
     # that tab (null).
     try:
         conflits = charger_projets().conflits_global((projets or {}).get('studios'), parc.fiches(cache),
-                                                    charger_projets().lire_instantane())
+                                                    charger_projets().lire_instantane(), e.get('tableau'))
     except Exception as exc:
         noter(f"conflits global · échec : {exc!r}")
         conflits = None
@@ -460,6 +466,8 @@ def clore(arguments):
         return charger_projets().fait_matin(cle)
     if isinstance(cle, str) and cle.startswith('etape-'):
         return charger_projets().ecarter_etape(cle)
+    if arguments.get('rouvrir') is True:
+        return rouvrir(cle)
     if arguments.get('plus_tard') is True:
         return plus_tard(cle)
     if isinstance(cle, str) and re.fullmatch(r't[0-9a-f]{12}', cle):
@@ -471,8 +479,42 @@ def clore(arguments):
     return charger_projets().fermer(cle)
 
 
+ROUVRIR_S = 60   # « Annuler » undoes only a closure of the PM's own click made less than a minute ago
+
+
+def rouvrir(cle, maintenant=None):
+    """« Annuler » after « Fait / Retirer du tableau », « C'est fait », « Reçu » or « Abandonner » (2026-11-18): the
+    page sends « clore » at the click (a reload within the 10 s lost it before) and « clore » with « rouvrir » if the PM
+    takes it back. Keyed and validated as « clore »; only a closure by the page made less than ROUVRIR_S ago is undone."""
+    maintenant = time.time() if maintenant is None else maintenant
+    if not isinstance(cle, str) or not re.fullmatch(r'[rt]?[0-9a-f]{12}', cle):
+        raise ValueError('clé de ligne invalide')
+    if re.fullmatch(r'[0-9a-f]{12}', cle):
+        r = charger_projets().rouvrir(cle, maintenant)
+    else:
+        charger_parc()
+        chemin = parc.INTERNE / (parc.TIERS_RECUS if cle[0] == 't' else parc.RETIREES)
+        r = parc.lire_json(chemin, {})
+        r = r if isinstance(r, dict) else {}
+        x = r.get(cle)
+        quand = x if cle[0] == 't' else (x.get('quand') if isinstance(x, dict) else None)
+        if not isinstance(quand, (int, float)) or not 0 <= maintenant - quand <= ROUVRIR_S:
+            raise ValueError('rien à annuler')
+        del r[cle]
+        parc.ecrire_atomique(chemin, json.dumps(r, ensure_ascii=False, indent=1))
+        sid = x.get('session') if cle[0] == 'r' and x.get('abandon') else None
+        if sid:
+            a = parc.lire_json(parc.INTERNE / ABANDONNEES, {})
+            if isinstance(a, dict) and isinstance(a.get(sid), dict) and 0 <= maintenant - (a[sid].get('quand') or 0) <= ROUVRIR_S:
+                del a[sid]
+                parc.ecrire_atomique(parc.INTERNE / ABANDONNEES, json.dumps(a, ensure_ascii=False, indent=1))
+        r = {'rouvert': cle}
+    noter(f"ligne rouverte (Annuler) : {cle}")
+    return r
+
+
 PLUS_TARD = 'plus-tard.json'   # in ~/Mon Studio/.parc: {key: until (ms)}, the lines hidden until tomorrow
-ABANDONNEES = 'abandonnees.json'   # in ~/Mon Studio/.parc: the stopped sessions the PM gave up, for the rangement
+ABANDONNEES = 'abandonnees.json'   # in ~/Mon Studio/.parc: the stopped sessions the PM gave up, for « Ranger »
 
 
 def demain_minuit(maintenant=None):
@@ -530,8 +572,8 @@ def retirer(cle, abandon=False):
     maintenant = time.time()
     limite = maintenant - parc.RETIREES_JOURS * 86400
     r = {k: v for k, v in r.items() if isinstance(v, dict) and (v.get('quand') or 0) >= limite}
-    # An abandoned session is not told (it is stopped): it is proposed for archiving instead (hooks/rangement.py).
-    r[cle] = dict(l, quand=maintenant, prevenue=bool(abandon))
+    # An abandoned session is not told (it is stopped): it joins the « À ranger » line of the board (parc.a_ranger).
+    r[cle] = dict(l, quand=maintenant, prevenue=bool(abandon), abandon=bool(abandon))
     parc.ecrire_atomique(chemin, json.dumps(r, ensure_ascii=False, indent=1))
     if abandon and l.get('session'):
         a = parc.lire_json(parc.INTERNE / ABANDONNEES, {})
@@ -609,7 +651,9 @@ def projet(arguments):
     vue = parc.vue_projet_pour_la_page(e, dossier)
     # The « Conflits » tab: the open cases of the Studio's register, read-only. A failure costs only that tab.
     try:
-        vue['conflits'] = charger_projets().conflits_du_projet(dossier, parc.fiches(cache), depuis_connecteur=True)
+        pj = charger_projets()
+        vue['conflits'] = pj.conflits_du_projet(dossier, parc.fiches(cache), depuis_connecteur=True,
+                                                questions=pj._lignes_du_projet(e.get('tableau'), dossier))
     except Exception as exc:
         noter(f"conflits · échec : {exc!r}")
         vue['conflits'] = None
@@ -685,6 +729,8 @@ def ouvrir(arguments):
         if session and charger_projets().dossier_normal(str(arguments.get('dossier') or '')) != charger_projets().dossier_normal(session):
             raise ValueError("une session n'ouvre que les fichiers de son propre Studio")
         return ouvrir_fichier(arguments.get('dossier'), arguments.get('fichier'))
+    if arguments.get('ranger') is True:
+        return copier_a_ranger()
     sid = arguments.get('id') or ''
     copie = arguments.get('copier') or ''
     # A setup step's button (« Mise en route »): only its command to the clipboard, to paste in a new session; the
@@ -702,6 +748,29 @@ def ouvrir(arguments):
     if r.returncode != 0:
         raise RuntimeError("l'app n'a pas pu ouvrir la session")
     return {'ouvert': sid}
+
+
+def copier_a_ranger(maintenant=None):
+    """« Ranger » (PM, Q5, 2026-11-18): the request to archive the finished sessions, in the PM's words, to the
+    clipboard. The list and the text come from the Mac's own reading (parc.a_ranger), never from the page. Nothing is
+    archived here: the app refuses archive_session ordered by a hook's text, and a scheduled run cannot call it; the PM
+    pastes the request in a session of his, and his message is his consent. The sessions of the click are noted in
+    ranger.json, so that once archived they show in « Rangées aujourd'hui »."""
+    maintenant = maintenant or time.time()
+    charger_parc()
+    with CALCUL:
+        cache = parc.charger_cache()
+        liste = parc.a_ranger(parc.fiches(cache), maintenant)
+    if not liste:
+        raise ValueError('aucune session à ranger')
+    texte = parc.texte_a_ranger(liste)
+    subprocess.run(['pbcopy'], input=texte.encode(), capture_output=True)
+    clics = parc.ranger_clics(maintenant)
+    for x in liste:
+        clics[x['id']] = {'titre': x['titre'], 'quand': maintenant}
+    parc.ecrire_atomique(parc.INTERNE / parc.RANGER_CLICS, json.dumps(clics, ensure_ascii=False, indent=1))
+    noter(f"ranger : {len(liste)} session(s) copiée(s)")
+    return {'copie': texte, 'sessions': [x['id'] for x in liste]}
 
 
 # ---------- Les autorisations confiées par le hook PermissionRequest

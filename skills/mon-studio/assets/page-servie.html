@@ -86,6 +86,7 @@ button.act, a.act { font:600 14px var(--f-body); background:var(--panel); cursor
 button.act:hover, button.act:focus-visible, a.act:hover, a.act:focus-visible { background:var(--soft); outline:none }
 .elapsed { font:500 14px var(--f-mono); color:var(--muted); font-variant-numeric:tabular-nums }
 .elapsed.late { color:var(--risk) }
+.recu { display:block; font:500 14px var(--f-body); color:var(--muted); white-space:nowrap }
 .due { font:600 14px var(--f-body); color:var(--muted); white-space:nowrap }
 .due.soon { color:var(--risk) }
 .empty { color:var(--muted); font-style:italic; padding:14px 16px; margin:0 }
@@ -96,6 +97,9 @@ table.fils-rouges td.agir { text-align:right; white-space:nowrap; width:1% }
 button.aller { font:600 15px var(--f-display); letter-spacing:.02em; color:var(--accent); background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:4px 12px; white-space:nowrap; cursor:pointer }
 button.aller:hover, button.aller:focus-visible { border-color:var(--accent); background:var(--soft); outline:none }
 button.aller .n { color:var(--muted); font-weight:500 }
+button.aller[aria-pressed="true"] { background:var(--accent); border-color:var(--accent); color:var(--panel) }
+button.aller[aria-pressed="true"] .n { color:inherit; opacity:.85 }
+button.tout-afficher { color:var(--ink) }
 tr[id^="bloc-"] { scroll-margin-top:12px }
 #bloc-autorisations .boite { border-color:var(--risk) }
 td.extrait code { font:14px var(--f-mono); background:var(--soft); padding:1px 5px; border-radius:3px; overflow-wrap:anywhere }
@@ -117,6 +121,9 @@ td.type button.decide.choix, td.action button.decide.choix { display:-webkit-box
 #clics:empty, #autorisations:empty { display:none }
 #bloc-projet .bande { background:var(--soft); border-radius:10px; padding:10px 12px 12px; margin-bottom:14px }
 .reponses .copie { font-size:14px; color:var(--muted); align-self:center; overflow-wrap:anywhere }
+/* What became of an answer (« Envoi de « … » à la session… », « copié : colle-le… ») has its own row under the buttons
+   (PM, 2026-11-19): it wraps inside its column and never overflows leftwards over the title. */
+.reponses .envoye, .reponses .copie { flex:1 1 100%; min-width:0; max-width:100%; box-sizing:border-box; white-space:normal; overflow-wrap:anywhere; text-align:right; align-self:stretch }
 button.replier { all:unset; cursor:pointer; display:inline-flex; gap:8px; align-items:baseline }
 button.replier:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px }
 button.replier .fleche { display:inline-block; transition:transform .15s } button.replier[aria-expanded="true"] .fleche { transform:rotate(90deg) }
@@ -319,6 +326,11 @@ tr.retiree .titre { text-decoration:line-through }
     <div class="boite" id="clics" style="margin-top:10px"></div>
   </section>
   <div class="boite" id="boite"><p class="empty" id="vide">Le tableau s'affiche dès que Mon Studio répond sur ton Mac.</p></div>
+  <section id="bloc-a-ranger" hidden>
+    <h2 id="a-ranger-titre">Sessions finies à ranger</h2>
+    <p class="sous-titre">Finies, rien à trancher, ou abandonnées. « Ranger » copie la demande d'archivage : colle-la dans une nouvelle session (Cmd+N). Rien n'est archivé sans ce message de toi.</p>
+    <div class="boite" id="a-ranger" style="margin-top:10px"></div>
+  </section>
   <section id="bloc-projets" hidden>
     <h2>Projets</h2>
     <div class="projets" id="projets" style="margin-top:10px"></div>
@@ -337,7 +349,7 @@ tr.retiree .titre { text-decoration:line-through }
   </section>
   <section id="bloc-rangees" hidden>
     <h2>Rangées aujourd'hui</h2>
-    <p class="note" id="rangees-note">Sessions finies archivées sans toi : elles se rouvrent depuis la liste Archivées de l'app.</p>
+    <p class="note" id="rangees-note">Sessions finies archivées par « Ranger » : elles se rouvrent depuis la liste Archivées de l'app.</p>
     <div class="boite" id="rangees" style="margin-top:10px"></div>
   </section>
   <section id="bloc-chantiers" hidden>
@@ -354,7 +366,7 @@ tr.retiree .titre { text-decoration:line-through }
   var FIXE = typeof PROJET_FIXE === "string" ? PROJET_FIXE : "";
   // The blocks of the main board, which span every project: hidden on a project's page (PM, 2026-11-17: « une page
   // projet ne montre aucun autre projet »). The Studios bar and the Today/Conflits tabs are hidden there too.
-  var HORS_PROJET = ["boite", "bloc-projets", "bloc-attendre", "bloc-anciennes", "bloc-sans", "bloc-rangees", "bloc-chantiers", "bloc-autorisations", "bloc-mise-en-route"];
+  var HORS_PROJET = ["boite", "bloc-projets", "bloc-attendre", "bloc-anciennes", "bloc-sans", "bloc-a-ranger", "bloc-rangees", "bloc-chantiers", "bloc-autorisations", "bloc-mise-en-route"];
   // First day: no Studio found yet, or no session read yet (lecture_app « pas_encore », never the alert).
   var ACCUEIL = "Aucun Studio trouvé pour l'instant. Ouvre une session dans le dossier d'un Studio : il apparaît ici.";
   // Un verbe par type, les mêmes que le tableau de chantier.
@@ -371,7 +383,7 @@ tr.retiree .titre { text-decoration:line-through }
     auto: { actif: false, demandes: [], decisions: [] }, envoyes: {}, parSession: {},
     att: { actif: false, attentes: [] }, repondues: {}, repParSession: {}, vues: {}, echeance: 0,
     projet: FIXE, vue: null, clore: false, closes: {}, matinFaits: {}, reglesOuvert: false,
-    onglet: "tableau", entreOuverts: {}, lus: {}, lire: false, surligne: null, etapesCopiees: {} };   // l'onglet n'est jamais retenu : chaque ouverture montre le tableau
+    onglet: "tableau", entreOuverts: {}, lus: {}, lire: false, surligne: null, etapesCopiees: {}, rangerCopie: 0 };   // l'onglet n'est jamais retenu : chaque ouverture montre le tableau
   var BASCULE_MS = 1000;   // un bouton qui vient de changer reste inactif une seconde : jamais un clic sur le mauvais sens
   // « ok » confirms a gesture done elsewhere: « C'est fait » (PM, 2026-11-17), the session still receives « Qn ok ».
   var LIBELLE_CHOIX = { go: "Go", oui: "Oui", ok: "C'est fait" };
@@ -509,20 +521,39 @@ tr.retiree .titre { text-decoration:line-through }
   // A request of the ingestion unfolds only when it adds something (0.2.17): its full text, what to type, the file it
   // points to (read here); then where it came from. Otherwise the row does not unfold: the title says it all.
   // A Slack request never copies the message nor the thread (PM, Q8, 2026-11-17): who wrote it, where, the link.
+  // A mail line (PM, 2026-11-19): the date it was received on the line, and in its detail where the due date comes from.
+  // Nothing invented: a received date the ingestion did not write falls back to the day it was noted, said as such.
+  function estMail(l) { return !!l.a_toi && (!!l.mail || origineDemande(l.lien_source) === "Mail"); }
+  function jourCourt(iso) { var t = jourEcheance(iso); return t === null ? iso : new Date(t).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }); }
+  function recuDit(l) {
+    if (l.recu) return { court: "reçu le " + jourCourt(l.recu), long: "reçu le " + jourCourt(l.recu), connu: true };
+    var note = l.passage || l.depuis;
+    return { court: note ? "noté le " + new Date(note).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }) : "date de réception inconnue",
+      long: "date de réception inconnue" + (note ? " (noté par l'ingestion le " + new Date(note).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }) + ")" : ""), connu: false };
+  }
+  function origineEcheance(l) {
+    if (l.ech_mode === "lue") return "lue dans le mail";
+    if (l.ech_mode === "calculee") return "calculée" + (l.ech_regle ? " : " + l.ech_regle : " (règle non précisée)");
+    return "origine de l'échéance inconnue";
+  }
   function detailAToi(l) {
     var parts = [], fichier = l.lien_source && !/^https?:/i.test(l.lien_source) ? l.lien_source : "";
     if (/^https:\/\/([a-z0-9-]+\.)*slack\.com\//i.test(l.lien_source || "")) {
       if (l.commande) parts.push("<p>À taper dans une session du Studio : <code>" + esc(l.commande) + "</code></p>");
-      return parts.join("") + "<dl><dt>Source</dt><dd>" + esc(quiDemande({ auteur: l.auteur, canal: l.canal, lien: l.lien_source })) +
+      return parts.join("") + "<dl><dt>Source</dt><dd>" + esc(quiDemande({ auteur: l.auteur, canal: l.canal, lien: l.lien_source, origine_session: l.origine_session, origine_fichier: l.origine_fichier })) +
         (l.passage ? ", relevé le " + esc(dateCourte(l.passage)) : "") + ' · <a href="' + esc(l.lien_source) +
         '" target="_blank" rel="noopener noreferrer">Ouvrir le message ↗</a></dd></dl>';
     }
     if (l.texte && l.texte !== l.affiche_suite) parts.push("<div>" + md(l.texte) + "</div>");
     if (l.commande) parts.push("<p>À taper dans une session du Studio : <code>" + esc(l.commande) + "</code></p>");
     if (fichier) parts.push("<p>Fichier lié : <code>" + esc(fichier) + "</code></p>" + rendreLu({ cle: cleFichier(l, fichier) }));
-    if (!parts.length) return "";
-    var source = "Relevé par l'ingestion" + (l.passage ? " le " + dateCourte(l.passage) : "") + (l.lien_source ? " · " + origineDemande(l.lien_source) : "");
-    return parts.join("") + "<dl><dt>Source</dt><dd>" + esc(source) + "</dd></dl>";
+    var mail = estMail(l);
+    // A mail line unfolds when it has something to say of its due date (a plain mail line adds nothing: its row says when).
+    if (!parts.length && !(mail && l.ech_iso)) return "";
+    var source = (l.lien_source ? origineDemande(l.lien_source) : origineIngestion(l)) + (l.passage ? ", relevé le " + dateCourte(l.passage) : "");
+    var dates = mail ? "<dt>Reçu</dt><dd>" + esc(recuDit(l).long) + "</dd>" +
+      (l.ech_iso ? "<dt>Échéance</dt><dd>" + esc(jourCourt(l.ech_iso)) + " · " + esc(origineEcheance(l)) + "</dd>" : "") : "";
+    return parts.join("") + "<dl><dt>Source</dt><dd>" + esc(source) + "</dd>" + dates + "</dl>";
   }
   // A line without number unfolds to short bullets: what its session expects of the PM (PM, 2026-11-06).
   function detail(l) {
@@ -557,12 +588,15 @@ tr.retiree .titre { text-decoration:line-through }
     if (/^https:\/\/(calendar\.google\.com|www\.google\.com\/calendar)\//i.test(u)) return "Agenda";
     if (/^https:\/\/(drive|docs)\.google\.com\//i.test(u)) return "Document Drive";
     if (u && !/^https?:/i.test(u)) return "Fichier du Studio";
-    return "Relevé par l'ingestion";
+    return "";
   }
+  // A request the ingestion wrote with no link, author or channel (PM, Q9, 2026-11-19): the session that ran that pass
+  // (found by the Mac from the pass time), else the Studio file where the ingestion wrote it. Never a name that is not one.
+  function origineIngestion(l) { return l.origine_session || l.origine_fichier || "projet/.ingestion-auto-state.json"; }
   // Who asks and where (PM, 2026-11-17): « Ana · #projet-client », the person read at the head of the request, the
   // channel named by the ingestion; « Slack », « Mail »… when nothing names them.
   function quiDemande(l) {
-    var ou = l.canal || origineDemande(l.lien).replace(/^Message /, "");
+    var ou = l.canal || origineDemande(l.lien).replace(/^Message /, "") || origineIngestion(l);
     return [l.auteur, ou].filter(Boolean).join(" · ");
   }
   function demandes(d) {
@@ -582,7 +616,8 @@ tr.retiree .titre { text-decoration:line-through }
         var r = { studio: p.nom, session: quiDemande(l), sous: "",
           ouvrir: !l.repli && l.session && !/^https:\/\/([a-z0-9-]+\.)*slack\.com\//i.test(l.lien || "") ? l.session : "", cle: l.cle, lien: "", type: "task", verbe: "Ouvrir", affiche_titre: "", affiche_suite: l.titre,
           texte: l.texte || l.titre, commande: l.commande || "", passage: l.passage || null, depuis: l.depuis, echeance: ech,
-          proche: ech !== null && (ech - aujourdhui.getTime()) / 86400000 < 4, a_toi: true, lien_source: l.lien || "", auteur: l.auteur || "", canal: l.canal || "", dossier: p.dossier,
+          proche: ech !== null && (ech - aujourdhui.getTime()) / 86400000 < 4, a_toi: true, lien_source: l.lien || "", auteur: l.auteur || "", canal: l.canal || "", origine_session: l.origine_session || "", origine_fichier: l.origine_fichier || "", dossier: p.dossier,
+          mail: !!l.mail, recu: l.recu || "", ech_iso: l.echeance || "", ech_mode: l.echeance_mode || "", ech_regle: l.echeance_regle || "",
           projet: p.dossier, tri: l.echeance || "9999-12-31", impact: l.impact || "normal", raison: l.raison || "", effort: l.effort || "" };
         if (l.reclassee) { r.reclassee = l.reclassee; r.calcul = l.calcul || null; }
         (l.ancienne ? out.anciennes : out.fraiches).push(r);
@@ -615,9 +650,11 @@ tr.retiree .titre { text-decoration:line-through }
     return Object.assign({}, l, { arret: "autorisation_a_rouvrir", type: "task", verbe: "Ouvrir", affiche_titre: "",
       affiche_suite: l.tache ? l.affiche_suite : A_ROUVRIR, detail: l.extrait ? "Ce que la session voulait faire : `" + String(l.extrait).replace(/`/g, "'") + "`" : "" });
   }
-  // « Fait / Retirer du tableau » (PM, 2026-11-17): on every line. The line greys out with « Annuler » for 10 s, then
-  // leaves for good (« clore »). A request of the ingestion is closed by its key; a line of a session by its « retrait »
-  // key, and its session is told at its next turn.
+  // « Fait / Retirer du tableau » (PM, 2026-11-17): on every line. « clore » leaves at the click (2026-11-18: sent after
+  // the 10 s, a reload in between lost it); the line greys out with « Annuler » for 10 s, which reopens it (« clore »
+  // with « rouvrir »). A request of the ingestion is closed by its key; a line of a session by its « retrait » key, and
+  // its session is told at its next turn. While a line is in its 10 s, a fresh reading waits (it would drop the line
+  // and its « Annuler »).
   var ANNULER_MS = 10000;
   etat.retraits = {};
   // The PM's own order (switch « reclassement », PM 2026-11-17, for him alone at first): one button per line of the
@@ -635,7 +672,7 @@ tr.retiree .titre { text-decoration:line-through }
     return Object.assign({}, l, { impact: x.vers === "dabord" ? "fort" : "normal", raison: CLASSE_PAR_TOI, reclassee: x.vers,
       calcul: l.calcul || { impact: l.impact, raison: l.raison || "", effort: l.effort || "" } });
   }
-  // The three bands of the board, from what each line carries (impact, effort, hors_studio): no judgement here.
+  // The three bands of the board, from what each line carries (impact, effort): no judgement here.
   function bandesDuTableau(demandesFraiches, lignes) {
     // A scheduled pass stopped on its way (en_tete: the morning point not written, an authorization nobody gave) leads
     // « D'abord » (PM, 2026-11-17: the app marks it « réussie »); then the short answers.
@@ -648,8 +685,29 @@ tr.retiree .titre { text-decoration:line-through }
     // What the PM put first stays in « D'abord », however old (switch « reclassement »).
     var attend = function (l) { return l.reclassee !== "dabord" && (l.impact === "faible" || vieille(l)); };
     return { dabord: stable(tout.filter(function (l) { return !attend(l) && l.impact === "fort"; }), court),
-      ensuite: stable(tout.filter(function (l) { return !attend(l) && l.impact !== "fort"; }), function (l) { return l.hors_studio ? 1 : 0; }),
+      // « Ensuite » : one order for every line, whatever the folder (PM, 2026-11-19, Q2 and Q3).
+      ensuite: ordreEnsuite(tout.filter(function (l) { return !attend(l) && l.impact !== "fort"; })),
       attendre: tout.filter(attend) };
+  }
+  // The order of « Ensuite » (PM, 2026-11-19): the server's order of the board (parc.py, lignes_et_anciennes), with the
+  // ingestion's requests (« À toi ») placed in the block of their Studio instead of all on top. Studios: the most urgent
+  // line first, then the most recent line of that urgency; in a Studio: urgency, close deadline, most recent. Urgency:
+  // close deadline 0, a session that waits for less than 24 h 1, open 2, « à confirmer » 5 (rang_urgence). A line of a
+  // session carries its own (urgence, recente); a request has a close deadline or none.
+  function ordreEnsuite(liste) {
+    var u = function (l) { return l.a_toi ? (l.proche ? 0 : 2) : (typeof l.urgence === "number" ? l.urgence : 2); };
+    var r = function (l) { return l.a_toi ? l.depuis || 0 : l.recente || l.depuis || 0; };
+    var best = {};
+    liste.forEach(function (l) {
+      var b = best[l.studio], ul = u(l), rl = r(l);
+      if (!b || ul < b.u) best[l.studio] = { u: ul, r: rl };
+      else if (ul === b.u && rl > b.r) b.r = rl;
+    });
+    return liste.map(function (l, i) { return { l: l, i: i }; }).sort(function (x, y) {
+      var a = x.l, b = y.l, sa = best[a.studio], sb = best[b.studio];
+      return (sa.u - sb.u) || (sb.r - sa.r) || (String(a.studio) < String(b.studio) ? -1 : String(a.studio) > String(b.studio) ? 1 : 0) ||
+        (u(a) - u(b)) || ((a.proche ? a.echeance || 0 : 0) - (b.proche ? b.echeance || 0 : 0)) || (r(b) - r(a)) || (x.i - y.i);
+    }).map(function (x) { return x.l; });
   }
   var VIEILLE_MS = 21 * 86400000;
   function vieille(l) { return !l.remontee && !l.en_tete && !!l.depuis && Date.now() - l.depuis > VIEILLE_MS; }
@@ -725,6 +783,9 @@ tr.retiree .titre { text-decoration:line-through }
     return !!st && !OUTILLAGE.test(st.nom || "") && !OUTILLAGE.test(x.studio || "");
   }
 
+  // The project the PM filtered the board on (client side only), compared by its name as written.
+  etat.filtre = "";
+  function nomStudio(s) { return String(s || "").normalize("NFC").trim().toLowerCase(); }
   function rendre() {
     var d = etat.donnees;
     if (!d) return;
@@ -744,18 +805,32 @@ tr.retiree .titre { text-decoration:line-through }
       return '<button type="button" class="fil"' + (sid ? ' data-sid="' + esc(sid) + '"' : " disabled") + ' title="' + aide + '">' +
         (nonLue ? '<span class="non-lue" title="non lue"></span>' : "") + esc(titre) + " ↗</button>";
     }
-    // En haut, un bouton par Studio qui a une action, dans l'ordre du tableau : il descend à son bloc.
-    $("studios").hidden = !ordre.length || !!FIXE || !!etat.projet;
+    // En haut, un bouton par projet qui a une ligne, dans l'ordre du tableau : il filtre le tableau sur place, toutes bandes
+    // confondues (PM, 2026-11-19: « descendre au groupe » ratait les lignes des autres bandes). Un second clic, ou
+    // « Tout afficher », remet tout. Rien ne part au serveur : c'est le même tableau, relu avec un projet de moins.
+    var dem = demandes(d);
+    var memeStudio = function (a, b) { return nomStudio(a) === nomStudio(b); };
+    var duFiltre = function (l) { return !etat.filtre || memeStudio(l.studio, etat.filtre); };
+    var choix = [], total = {};
+    lignes.concat(dem.fraiches, dem.anciennes, (d.anciennes || []).filter(pasRetiree)).forEach(function (l) {
+      var k = nomStudio(l.studio);
+      if (!(k in total)) { total[k] = { nom: l.studio || "", n: 0 }; choix.push(k); }
+      total[k].n++;
+    });
+    $("studios").hidden = !choix.length || !!FIXE || !!etat.projet;
     // Et, à côté, « Vue projet » : la page ne montre plus que ce projet (PM, 2026-11-03 : « pour ne pas tout mélanger
     // quand on veut se focus sur un seul projet »). Un bouton par dossier : deux dossiers de même nom restent deux projets.
     var projets = d.projets || [];
-    $("studios").innerHTML = ordre.map(function (st, i) {
-      var siens = projets.filter(function (p) { return p.studio === st; });
-      return '<span class="studio-et-vue"><button type="button" class="aller" data-aller="' + i + '">' + esc(st) + ' <span class="n">· ' + nombre[st] + "</span></button>" +
+    $("studios").innerHTML = choix.map(function (k) {
+      var st = total[k].nom, actif = !!etat.filtre && k === nomStudio(etat.filtre);
+      var siens = projets.filter(function (p) { return memeStudio(p.studio, st); });
+      return '<span class="studio-et-vue"><button type="button" class="aller" data-filtre="' + esc(st) + '" aria-pressed="' + actif + '" title="' +
+        (actif ? "Remettre tout le tableau" : "Ne montrer que les lignes de ce projet, toutes bandes") + '">' + esc(st || "Hors Studio") + ' <span class="n">· ' + total[k].n + "</span></button>" +
         siens.map(function (p) {
-          return '<button type="button" class="vue-projet" data-projet="' + esc(p.dossier) + '" title="Ne montrer que ce projet">Vue projet' + (siens.length > 1 ? " · " + esc(p.nom) : "") + "</button>";
+          return '<button type="button" class="vue-projet" data-projet="' + esc(p.dossier) + '" title="Ouvrir la page de ce projet">Vue projet' + (siens.length > 1 ? " · " + esc(p.nom) : "") + "</button>";
         }).join("") + "</span>";
-    }).join("");
+    }).join("") + (etat.filtre ? '<button type="button" class="aller tout-afficher" data-filtre="" title="Remettre tous les projets">Tout afficher</button>' : "");
+    if (etat.filtre) { lignes = lignes.filter(duFiltre); dem.fraiches = dem.fraiches.filter(duFiltre); dem.anciennes = dem.anciennes.filter(duFiltre); }
     var entete = "<table><thead><tr><th>Studio</th><th>Session</th><th>Ce qui t'attend</th><th class=\"d\">Agir</th><th class=\"d\">Depuis</th></tr></thead><tbody>";
     // Une ligne du tableau, fraîche ou ancienne : Studio (au premier rang de son bloc), session, demande, verbe, ancienneté, dépli.
     function rang(l, nouveauStudio, premier, bande) {
@@ -764,7 +839,7 @@ tr.retiree .titre { text-decoration:line-through }
       if (kr && etat.retraits[kr]) {
         return '<tr class="retiree' + (nouveauStudio ? " nouveau-studio" : "") + '"' + (premier ? ancre(l.studio) : "") + '><td class="studio">' + (nouveauStudio ? esc(l.studio) : "") + "</td>" +
           '<td class="session">' + esc(l.session) + '</td><td class="action"><span class="titre">' + md(l.affiche_titre || l.affiche_suite) + "</span>" +
-          '<span class="apres"> · ' + (etat.retraits[kr].abandon ? "abandonnée, la session sera archivée" : "retirée du tableau") + '</span></td><td class="type"><button type="button" class="aller" data-annuler="' + esc(kr) + '" title="10 secondes pour annuler">Annuler</button></td><td class="quand"></td></tr>';
+          '<span class="apres"> · ' + (etat.retraits[kr].abandon ? "abandonnée, la session passe dans « À ranger »" : "retirée du tableau") + '</span></td><td class="type"><button type="button" class="aller" data-annuler="' + esc(kr) + '" title="10 secondes pour annuler">Annuler</button></td><td class="quand"></td></tr>';
       }
       var sid = etat.mcp ? sessionAOuvrir(l) : "";
       // La session de la ligne, que son nom ouvre, sans rien copier. Pour un chantier, son
@@ -823,9 +898,9 @@ tr.retiree .titre { text-decoration:line-through }
       if (gere && !faitSeul && ((Array.isArray(l.choix) && l.choix.indexOf(PAS_ENCORE) >= 0) || (a && Array.isArray(a.choix) && a.choix.indexOf(PAS_ENCORE) >= 0)))
         agir += '<button type="button" class="fait" data-plus-tard="' + esc(kr) + '" title="Masquer cette ligne jusqu\'à demain, sur le tableau seulement : rien n\'est envoyé à la session">Plus tard</button>';
       // A session stopped for more than 48 h (PM, 2026-11-17): « Abandonner » takes the line off and proposes the session
-      // for archiving (rangement, at the PM's next message in a top-level session).
+      // for archiving (the « À ranger » block under the board, archived only on the PM's « Ranger »).
       if (gere && arretee(l) && age > 48 * 3600000)
-        agir += '<button type="button" class="fait" data-abandonner="' + esc(kr) + '" title="La ligne part et la session sera archivée à ton prochain message dans une session (10 secondes pour annuler)">Abandonner</button>';
+        agir += '<button type="button" class="fait" data-abandonner="' + esc(kr) + '" title="La ligne part et la session passe dans « Sessions finies à ranger », sous le tableau (10 secondes pour annuler)">Abandonner</button>';
       else if (gere && !faitSeul) agir += '<button type="button" class="fait" data-retirer="' + esc(kr) + '" title="C\'est fait, ou plus d\'actualité : la ligne quitte le tableau (10 secondes pour annuler)">Fait / Retirer du tableau</button>';
       // One button that says what it does: out of « D'abord », or into it; on a line he moved, it undoes his order.
       if (bande && kr && reclassementAllume() && etat.clore && etat.mcp) {
@@ -838,6 +913,7 @@ tr.retiree .titre { text-decoration:line-through }
       var quand = l.echeance
         ? '<span class="due' + (l.proche ? " soon" : "") + '">avant le ' + esc(new Date(l.echeance).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })) + "</span>" + (l.a_toi ? ecoulee : "")
         : ecoulee;
+      if (estMail(l)) quand = '<span class="recu" title="' + esc(recuDit(l).long) + '">' + esc(recuDit(l).court) + "</span>" + quand;
       var cle = cleDe(l), ouvert = !!etat.deplies[cle], corps = detail(l);
       var surligne = l.a_toi && etat.surligne && etat.surligne.cle === l.cle && Date.now() - etat.surligne.t < SURLIGNE_MS;
       return '<tr class="' + (nouveauStudio ? "nouveau-studio" : "") + (surligne ? " surligne" : "") + '"' + (premier ? ancre(l.studio) : "") +
@@ -856,14 +932,14 @@ tr.retiree .titre { text-decoration:line-through }
     rendreProjets(d.liste_projets);
     // Les demandes « À toi de jouer » de l'ingestion : en tête du tableau, le projet sur chaque
     // ligne ; celles de plus de 7 jours sans échéance à venir vont dans « Anciennes ».
-    var dem = demandes(d), bandes = bandesDuTableau(dem.fraiches, lignes);
-    var remontees = remonterAnciennes(bandes.dabord.length + bandes.ensuite.length, dem.anciennes.concat(d.anciennes || []).filter(pasRetiree));
+    var bandes = bandesDuTableau(dem.fraiches, lignes);
+    var remontees = remonterAnciennes(bandes.dabord.length + bandes.ensuite.length, dem.anciennes.concat((d.anciennes || []).filter(duFiltre)).filter(pasRetiree));
     var anciennes = remontees.reste;
     var horsService = d.lecture_app && d.lecture_app.etat === "hors_service";
     // No Studio known yet (first day): say how one appears rather than « Rien ne t'attend ».
     var aucunStudio = !!(d.liste_projets && Array.isArray(d.liste_projets.studios) && !d.liste_projets.studios.length)
       || !!(d.lecture_app && d.lecture_app.etat === "pas_encore");
-    if (!bandes.dabord.length && !bandes.ensuite.length && !remontees.haut.length) { $("boite").innerHTML = '<p class="empty">' + (horsService ? "Mon Studio ne lit plus l'app : impossible de dire ce qui t'attend." : autorisations.length ? "Rien d'autre ne t'attend." : anciennes.length || bandes.attendre.length ? "Rien de récent ne t'attend." : aucunStudio ? ACCUEIL : "Rien ne t'attend.") + "</p>"; }
+    if (!bandes.dabord.length && !bandes.ensuite.length && !remontees.haut.length) { $("boite").innerHTML = '<p class="empty">' + (horsService ? "Mon Studio ne lit plus l'app : impossible de dire ce qui t'attend." : etat.filtre ? "Rien ne t'attend sur « " + esc(etat.filtre) + " » : « Tout afficher » remet les autres projets." : autorisations.length ? "Rien d'autre ne t'attend." : anciennes.length || bandes.attendre.length ? "Rien de récent ne t'attend." : aucunStudio ? ACCUEIL : "Rien ne t'attend.") + "</p>"; }
     else {
       // Three bands (PM, 2026-11-17: « ce qui est très impactant et très peu coûteux en premier »): « D'abord » the
       // lines of strong impact, whatever their origin, the short answers first; « Ensuite » the others in the order
@@ -917,6 +993,17 @@ tr.retiree .titre { text-decoration:line-through }
           '<td class="quand">' + (jour ? '<span class="elapsed" title="' + esc(dateCourte(x.derniere)) + '">' + JOURS[jour.getDay()] + " " +
             jour.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }) + "</span>" : "") + "</td></tr>";
       }).join("") + "</tbody></table>" : "";
+    // « Ranger » (PM, Q5, 2026-11-18) : les sessions finies ou abandonnées, et un bouton qui copie la demande
+    // d'archivage écrite par le Mac (ranger_texte). L'app refuse cet archivage quand l'ordre vient d'un hook : le PM colle
+    // la demande lui-même dans une session, son message vaut accord. La page n'archive rien.
+    var ar = FIXE ? [] : (d.a_ranger || []);
+    $("bloc-a-ranger").hidden = !ar.length;
+    $("a-ranger-titre").textContent = ar.length === 1 ? "1 session finie à ranger" : ar.length + " sessions finies à ranger";
+    $("a-ranger").innerHTML = ar.length ? "<table><tbody>" + ar.map(function (x) {
+      return '<tr><td class="session">' + bouton(x.id, x.titre || "Session sans titre", false, "Ouvrir la session") +
+        (x.abandon ? ' <span class="muted">abandonnée</span>' : "") + "</td></tr>";
+    }).join("") + "</tbody></table>" + (etat.mcp && d.ranger_texte ? '<p><button type="button" class="act k-task" data-ranger="1" title="Copie la demande d\'archivage, à coller dans une nouvelle session (Cmd+N)">' +
+      (etat.rangerCopie ? "Copié : colle-le dans une nouvelle session (Cmd+N)" : "Ranger") + "</button></p>" : "") : "";
     // Les sessions finies que le rangement a archivées aujourd'hui (hooks/rangement.py) : leur titre, pour les rouvrir.
     var rangees = d.rangees || [];
     $("bloc-rangees").hidden = !rangees.length;
@@ -1002,6 +1089,23 @@ tr.retiree .titre { text-decoration:line-through }
     if (etat.donnees) rendre();
     try { await etat.mcp.invalidate(SERVEUR, "lignes"); } catch (x) {}
   }
+  // « Ranger » : la demande part dans le presse-papiers, par la page et par le connecteur (pbcopy), qui relit la liste
+  // sur le Mac et note les sessions du clic (ranger.json). Rien n'est archivé ici.
+  async function ranger() {
+    var d = etat.donnees;
+    if (!etat.mcp || !d || !d.ranger_texte) return;
+    copier(d.ranger_texte);
+    try {
+      var r = await etat.mcp.callTool(SERVEUR, "ouvrir", { ranger: true }, { cache: false });
+      var p = (r && r.payload) || {};
+      if (p.copie) copier(p.copie);
+      alerte("");
+    } catch (err) {
+      if (err && err.code === "cancelled") { alerte("Demande non copiée : refusé dans l'app."); return; }
+    }
+    etat.rangerCopie = Date.now();
+    rendre();
+  }
   async function copierEtape(bouton) {
     var texte = bouton.getAttribute("data-etape-copier"), cle = bouton.getAttribute("data-etape");
     copier(texte);
@@ -1033,12 +1137,16 @@ tr.retiree .titre { text-decoration:line-through }
     if (FIXE) nommerPage(v.nom);
     // Même tri que la page : en tête « En un clic », puis les questions, puis « Anciennes », repliées.
     var enBande = function (l) { return autorisationVivante(l) || unClic(l); };
-    // Les demandes de l'ingestion de ce projet, que le tableau principal (caché ici) porte ailleurs : en tête.
+    // Les demandes de l'ingestion de ce projet, que le tableau principal (caché ici) porte ailleurs : rangées avec les
+    // questions, dans l'ordre du tableau principal (PM, 2026-11-19, Q3) : « D'abord », puis « Ensuite » (urgence, puis
+    // récence), puis ce qui peut attendre ; plus en tête d'office.
     // Same folder whether written composed or decomposed (« partagés »): the app and projets.json differ.
     var nfc = function (s) { return String(s || "").normalize("NFC"); };
     var dem = demandes(etat.donnees), duProjet = function (l) { return nfc(l.projet) === nfc(etat.projet); };
     var questions = (v.questions || []).filter(pasRetiree);
-    var bande = questions.filter(enBande), q = dem.fraiches.filter(duProjet).concat(questions.filter(function (l) { return !enBande(l); }).map(horsBande));
+    var bande = questions.filter(enBande);
+    var bandes = bandesDuTableau(dem.fraiches.filter(duProjet), questions.filter(function (l) { return !enBande(l); }).map(horsBande));
+    var q = bandes.dabord.concat(bandes.ensuite, bandes.attendre);
     var remontees = remonterAnciennes(bande.length + q.length, dem.anciennes.filter(duProjet).concat((v.anciennes || []).filter(pasRetiree)));
     var vieilles = remontees.reste;
     q = q.concat(remontees.haut);
@@ -1086,6 +1194,14 @@ tr.retiree .titre { text-decoration:line-through }
   // L'onglet « Conflits » d'un projet : les cas ouverts du registre du Studio (projet/conflits.md), en lecture seule, et
   // le bouton qui ouvre la session « <Projet> · Conflits Studio » où le PM les tranche. Aucun bouton de réponse ici.
   function ouvrirConflits(c) { return c && Array.isArray(c.ouverts) ? c.ouverts : []; }
+  // What a session is settling now (2026-11-19) : the questions it asks on the board (c.en_cours) and the sessions that
+  // settle conflicts of this Studio (the register's session, /backlog:nettoyer…) active within a day (c.sessions_actives).
+  function enCoursConflits(c) { return c && Array.isArray(c.en_cours) ? c.en_cours : []; }
+  function activesConflits(c) { return c && Array.isArray(c.sessions_actives) ? c.sessions_actives : []; }
+  function boutonRepondre(sid, titre, verbe) {
+    return etat.mcp ? '<button type="button" class="aller" data-sid="' + esc(sid) + '" title="Ouvrir cette session">' + verbe + " « " + esc(titre) + " » ↗</button>"
+      : "Session « " + esc(titre) + " »";
+  }
   // « Préparer l'aperçu » (PM, Q18, 2026-11-15) : un Studio jamais vérifié, sans aperçu prêt. Le relevé et le jugement
   // tournent dans la session des conflits, sur go du coût ; le PM revient valider quand il veut. Même chemin que les
   // autres boutons : la session s'ouvre, le texte est copié.
@@ -1110,17 +1226,27 @@ tr.retiree .titre { text-decoration:line-through }
   function valeurConflit(nom, x) {
     return '<div class="valeur">' + nom + " : <strong>" + esc(x.texte) + "</strong> (" + esc(x.source) + ", " + esc(x.date) + ")</div>";
   }
-  // The date of the last complete pass, and what became of the re-read since (2026-11-17) : « Studio à jour » only when
-  // a re-read found nothing or was judged whole (c.relecture.a_jour) ; skipped, too large or never run, the tab says so
-  // with its reason. Without `relecture` (an older connector), the date alone, never « à jour ».
+  // The header, one line built from what the data holds (2026-11-19) : the date of the last complete pass, what was
+  // checked since (the backlog's survey, a re-read's result), what is being settled and what is open. « Studio à jour »
+  // only when nothing is open. No promise of a pass that may not run.
   function jjmm(d) { return String(d || "").slice(0, 5); }
   function enteteConflits(c, n) {
-    if (!c || c.lu === false || !c.dernier_passage) return "";
-    var r = c.relecture || null, quand = jjmm(c.dernier_passage);
-    var tete = n ? "Vérifié le " + esc(quand) + " · " + n + (n > 1 ? " conflits à trancher" : " conflit à trancher")
-      : r && r.a_jour ? "Studio à jour"
-      : "Dernier passage complet le " + esc(quand);
-    return '<p class="pour-info"><strong>' + tete + "</strong>" + (r && r.texte ? " · " + esc(r.texte) : "") + "</p>";
+    if (!c || c.lu === false) return "";
+    var r = c.relecture || null, b = c.backlog || null, actives = activesConflits(c), enCours = enCoursConflits(c);
+    var parts = [];
+    if (c.dernier_passage) parts.push("Dernier passage complet le " + esc(jjmm(c.dernier_passage)));
+    if (r && r.texte) parts.push(esc(r.texte));
+    if (b && (b.contradictions || b.decisions)) {
+      parts.push("Contradictions du backlog " + (b.releve ? "relevées le " + esc(jjmm(b.releve)) + " (" + b.contradictions + ")" : ": " + b.contradictions) +
+        (b.decisions ? ", " + b.decisions + (b.decisions > 1 ? " tranchées" : " tranchée") : ""));
+    }
+    if (actives.length) parts.push("Tri en cours dans « " + esc(actives[0].titre) + " »" + (actives.length > 1 ? " (+" + (actives.length - 1) + ")" : ""));
+    var nCas = ouvrirConflits(c).length;
+    if (nCas) parts.push(nCas + (nCas > 1 ? " conflits à trancher" : " conflit à trancher"));
+    if (enCours.length) parts.push(enCours.length + (enCours.length > 1 ? " questions ouvertes" : " question ouverte"));
+    if (!n && !actives.length && r && r.a_jour && c.dernier_passage) parts[0] = "Studio à jour";
+    if (!parts.length) return "";
+    return '<p class="pour-info"><strong>' + parts[0] + "</strong>" + parts.slice(1).map(function (x) { return " · " + x; }).join("") + "</p>";
   }
   // The journal of the register: what was settled, when, by whom (the PM's own words when kept). No code.
   var CHOIX_LISIBLE = { "remplacer": "remplacé", "à confirmer avec le client": "à confirmer avec le client", "simple discussion": "gardé tel quel" };
@@ -1129,11 +1255,11 @@ tr.retiree .titre { text-decoration:line-through }
     if (!j.length) return "";
     return "<h3>Tranché</h3>" + '<ul class="conflits">' + j.map(function (x) {
       return "<li><strong>" + esc(x.sujet) + "</strong>" + '<div class="valeur">' + esc(CHOIX_LISIBLE[x.choix] || x.choix) + ", le " + esc(jjmm(x.date)) + " par " + esc(x.par) +
-        (x.reprise ? " (tranché à la main, repris)" : "") + "</div>" + (x.reponse ? '<div class="valeur">' + esc(x.reponse) + "</div>" : "") + "</li>";
+        (x.origine === "backlog" ? " (backlog)" : "") + (x.reprise ? " (tranché à la main, repris)" : "") + "</div>" + (x.reponse ? '<div class="valeur">' + esc(x.reponse) + "</div>" : "") + "</li>";
     }).join("") + "</ul>" + (c.tranches > j.length ? '<p class="pour-info">Et ' + (c.tranches - j.length) + " plus anciens, dans le registre des conflits du Studio.</p>" : "");
   }
   function rendreConflits(c) {
-    var cas = ouvrirConflits(c), n = cas.length, conflits = etat.ongletProjet === "conflits";
+    var cas = ouvrirConflits(c), enCours = enCoursConflits(c), actives = activesConflits(c), nCas = cas.length, n = nCas + enCours.length, conflits = etat.ongletProjet === "conflits";
     // The dot counts the new cases, not shown to the PM yet in the conflicts session (PM, 2026-11-10).
     var nv = c && c.nouveaux ? c.nouveaux : 0;
     $("projet-onglet-conflits").innerHTML = "Conflits" + (nv ? ' <span class="pastille">' + nv + "</span>" : "");
@@ -1146,10 +1272,13 @@ tr.retiree .titre { text-decoration:line-through }
     $("projet-conflits").hidden = !conflits;
     $("projet-ligne-conflits").hidden = !n;
     $("projet-ligne-conflits").innerHTML = n ? "<strong>" + n + (n > 1 ? " conflits ouverts" : " conflit ouvert") + "</strong>" +
-      (nv ? " dont " + nv + (nv > 1 ? " nouveaux" : " nouveau") : "") + " dans le registre du Studio" +
-      (c.relance ? " · à relancer : " + esc(c.raison) : "") + " · " + boutonSessionConflits(c) : "";
+      (nv ? " dont " + nv + (nv > 1 ? " nouveaux" : " nouveau") : "") + (nCas ? " · " + nCas + " dans le registre du Studio" : "") +
+      (enCours.length ? " · " + enCours.length + (enCours.length > 1 ? " questions posées" : " question posée") + " en ce moment" : "") +
+      (c.relance ? " · à relancer : " + esc(c.raison) : "") + " · " +
+      (nCas ? boutonSessionConflits(c) : boutonRepondre(enCours[0].session, enCours[0].session_titre, "Répondre dans")) : "";
     if (!c) { $("projet-conflits").innerHTML = '<p class="empty">Registre des conflits pas encore lu.</p>'; return; }
-    var h = enteteConflits(c, n) + "<p>" + boutonSessionConflits(c) + "</p>";
+    // The register's session button, unless another session is the one settling (no « pas encore de session » then).
+    var h = enteteConflits(c, n) + (c.session || !(enCours.length || actives.length) ? "<p>" + boutonSessionConflits(c) + "</p>" : "");
     // The connector reads a copy of the register (the Drive refuses it): when the conflicts session worked after that
     // copy, say so rather than an empty tab (2026-11-18, the first relevé showed 0 case for 19 in the register).
     if (c.lu !== false && c.en_retard) h += '<p class="pour-info">La session des conflits a travaillé depuis la copie du registre lue à ' + esc(c.copie_le || "") +
@@ -1157,12 +1286,25 @@ tr.retiree .titre { text-decoration:line-through }
     if (c.lu === false) h += '<p class="empty">Le registre des conflits n\'a pas pu être lu : il s\'affiche après le prochain calcul de Mon Studio hors de l\'app.</p>';
     else if (!n && c.en_retard) h += "";
     else if (!n && c.verification === "jamais") h += '<p class="empty">' + esc(c.texte_premiere || "Le premier relevé des conflits n'est pas encore fait.") + "</p>";
-    else if (!n && c.dernier_passage && !(c.journal || []).length) h += '<p class="empty">Passage complet du ' + esc(jjmm(c.dernier_passage)) + " : aucun conflit.</p>";
-    else if (!n && !(c.journal || []).length) h += '<p class="empty">Aucun conflit ouvert dans ce Studio.</p>';
-    else h += '<p class="pour-info">Lecture seule : tu tranches dans la session des conflits, une décision à la fois.</p><ul class="conflits">' + cas.map(function (x) {
-      return "<li><strong>" + esc(x.sujet) + "</strong>" + (x.nouveau ? ' <span class="pastille">nouveau</span>' : "") + valeurConflit("Ancienne valeur", x.ancienne) + valeurConflit("Nouvelle valeur", x.nouvelle) +
-        '<div class="valeur">Déjà communiqué au client : <strong>' + (x.communique ? "oui" : "non") + "</strong></div></li>";
-    }).join("") + "</ul>";
+    else if (!n && !actives.length && c.dernier_passage && !(c.journal || []).length) h += '<p class="empty">Passage complet du ' + esc(jjmm(c.dernier_passage)) + " : aucun conflit.</p>";
+    else if (!n && !actives.length && !(c.journal || []).length) h += '<p class="empty">Aucun conflit ouvert dans ce Studio.</p>';
+    else {
+      if (n) h += '<p class="pour-info">Lecture seule : tu réponds dans la session indiquée, une décision à la fois.</p>';
+      var sessionsAvecQuestion = {};
+      if (enCours.length || actives.length) {
+        h += "<h3>En cours</h3>" + '<ul class="conflits">' + enCours.map(function (x) {
+          sessionsAvecQuestion[x.session] = true;
+          return "<li><strong>" + esc(x.question) + "</strong>" + (x.options ? '<div class="valeur"><small>' + esc(x.options) + "</small></div>" : "") +
+            "<div>" + boutonRepondre(x.session, x.session_titre, "Répondre dans") + "</div></li>";
+        }).join("") + actives.filter(function (x) { return !sessionsAvecQuestion[x.sessionId]; }).map(function (x) {
+          return "<li>Tri en cours dans « " + esc(x.titre) + " » " + (etat.mcp ? '<button type="button" class="aller" data-sid="' + esc(x.sessionId) + '" title="Ouvrir cette session">Ouvrir ↗</button>' : "") + "</li>";
+        }).join("") + "</ul>";
+      }
+      if (nCas) h += (enCours.length || actives.length ? "<h3>Dans le registre du Studio</h3>" : "") + '<ul class="conflits">' + cas.map(function (x) {
+        return "<li><strong>" + esc(x.sujet) + "</strong>" + (x.nouveau ? ' <span class="pastille">nouveau</span>' : "") + valeurConflit("Ancienne valeur", x.ancienne) + valeurConflit("Nouvelle valeur", x.nouvelle) +
+          '<div class="valeur">Déjà communiqué au client : <strong>' + (x.communique ? "oui" : "non") + "</strong></div></li>";
+      }).join("") + "</ul>";
+    }
     if (c.illisibles) h += '<p class="pour-info">' + c.illisibles + (c.illisibles > 1 ? " cas illisibles" : " cas illisible") + " dans le registre des conflits du Studio : la session des conflits les montre.</p>";
     h += journalConflits(c);
     $("projet-conflits").innerHTML = h;
@@ -1609,8 +1751,23 @@ tr.retiree .titre { text-decoration:line-through }
   // abandon: a stopped session's line (« Abandonner »), its session proposed for archiving once the line leaves.
   function retirer(cle, abandon) {
     if (!etat.mcp || !etat.clore || !CLE_RETRAIT.test(cle || "") || etat.closes[cle] || etat.retraits[cle]) return;
-    etat.retraits[cle] = { t: Date.now(), abandon: !!abandon, minuteur: setTimeout(function () { confirmerRetrait(cle); }, ANNULER_MS) };
+    var r = etat.retraits[cle] = { t: Date.now(), abandon: !!abandon };
+    r.minuteur = setTimeout(function () { finirRetrait(cle); }, ANNULER_MS);
+    r.envoi = envoyerRetrait(cle, r);
     if (etat.donnees) rendre();
+  }
+  async function envoyerRetrait(cle, r) {
+    try {
+      await etat.mcp.callTool(SERVEUR, "clore", r.abandon ? { cle: cle, abandon: true } : { cle: cle }, { cache: false });
+      alerte("");
+      return true;
+    } catch (err) {
+      var c = err && err.code;
+      if (c === "not_in_manifest") etat.clore = false;
+      alerte(c === "cancelled" ? "Ligne non retirée : refusé dans l'app." : "Ligne non retirée" + (err && err.message ? " : " + err.message : "") + ".");
+      if (etat.retraits[cle] === r) { clearTimeout(r.minuteur); delete etat.retraits[cle]; apresRetraits(); }
+      return false;
+    }
   }
   // « Plus tard »: the connector keeps the line hidden until tomorrow (« clore » with plus_tard), nothing else moves.
   async function plusTard(cle) {
@@ -1630,27 +1787,40 @@ tr.retiree .titre { text-decoration:line-through }
     }
     try { await etat.mcp.invalidate(SERVEUR, "lignes"); } catch (x) {}
   }
-  function annulerRetrait(cle) {
+  // The 10 s are over: the line, closed at the click, leaves the page.
+  async function finirRetrait(cle) {
     var r = etat.retraits[cle];
-    if (!r || r.envoi) return;
+    if (!r) return;
+    var ok = await r.envoi;
+    if (etat.retraits[cle] !== r) return;
+    delete etat.retraits[cle];
+    if (ok) etat.closes[cle] = 1;
+    apresRetraits();
+  }
+  // « Annuler »: the line comes back at once; the connector reopens it once the closing has gone through.
+  async function annulerRetrait(cle) {
+    var r = etat.retraits[cle];
+    if (!r) return;
     clearTimeout(r.minuteur);
     delete etat.retraits[cle];
     if (etat.donnees) rendre();
-  }
-  async function confirmerRetrait(cle) {
-    var r = etat.retraits[cle];
-    if (!r || r.envoi) return;
-    r.envoi = true; clearTimeout(r.minuteur);
+    if (!(await r.envoi)) return;
     try {
-      await etat.mcp.callTool(SERVEUR, "clore", r.abandon ? { cle: cle, abandon: true } : { cle: cle }, { cache: false });
-      etat.closes[cle] = 1; alerte("");
+      await etat.mcp.callTool(SERVEUR, "clore", { cle: cle, rouvrir: true }, { cache: false });
+      alerte("");
     } catch (err) {
       var c = err && err.code;
-      if (c === "not_in_manifest") etat.clore = false;
-      alerte(c === "cancelled" ? "Ligne non retirée : refusé dans l'app." : "Ligne non retirée" + (err && err.message ? " : " + err.message : "") + ".");
+      etat.closes[cle] = 1;
+      alerte(c === "cancelled" ? "Ligne non remise : refusé dans l'app." : "Ligne non remise" + (err && err.message ? " : " + err.message : "") + ".");
     }
-    delete etat.retraits[cle];
-    if (etat.donnees) rendre();
+    apresRetraits();
+  }
+  // No line left in its 10 s: the reading held back meanwhile is shown, and a fresh one is asked.
+  async function apresRetraits() {
+    if (Object.keys(etat.retraits).length) { if (etat.donnees) rendre(); return; }
+    var attendue = etat.lectureRetenue;
+    etat.lectureRetenue = null;
+    if (attendue) recevoir(attendue); else if (etat.donnees) rendre();
     try { await etat.mcp.invalidate(SERVEUR, "lignes"); } catch (x) {}
   }
   async function reclasser(valeur) {
@@ -1673,10 +1843,6 @@ tr.retiree .titre { text-decoration:line-through }
     if (etat.donnees) rendre();
     try { await etat.mcp.invalidate(SERVEUR, "lignes"); } catch (y) {}
   }
-  // The page closes within the 10 s: what was retired leaves now, as the PM asked.
-  if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("pagehide", function () {
-    Object.keys(etat.retraits).forEach(function (k) { confirmerRetrait(k); });
-  });
   async function clore(bouton) {
     var cle = bouton.getAttribute("data-clore");
     if (!etat.mcp || !etat.clore || !/^(?:[0-9a-f]{12}|etape-(?:matin|terminal))$/.test(cle || "") || etat.closes[cle]) return;
@@ -2042,6 +2208,12 @@ tr.retiree .titre { text-decoration:line-through }
       if (etat.donnees) rendreMatin(etat.donnees.matin);
       return;
     }
+    var rg = ev.target.closest && ev.target.closest("[data-ranger]");
+    if (rg) {
+      ev.preventDefault(); ev.stopPropagation();
+      if (!rg.disabled) ranger();
+      return;
+    }
     var ec = ev.target.closest && ev.target.closest("[data-etape-copier]");
     if (ec) {
       ev.preventDefault(); ev.stopPropagation();
@@ -2166,10 +2338,11 @@ tr.retiree .titre { text-decoration:line-through }
     decider(b);
   });
   document.addEventListener("click", function (ev) {
-    var b = ev.target.closest && ev.target.closest("[data-aller]");
+    var b = ev.target.closest && ev.target.closest("[data-filtre]");
     if (!b) return;
-    var cible = document.getElementById("bloc-" + b.getAttribute("data-aller"));
-    if (cible) cible.scrollIntoView({ block: "start" });
+    var v = b.getAttribute("data-filtre") || "";
+    etat.filtre = v && nomStudio(v) !== nomStudio(etat.filtre) ? v : "";
+    if (etat.donnees) rendre();
   });
   // Les onglets au clavier (motif ARIA) : flèches gauche et droite, Début et Fin.
   document.addEventListener("keydown", function (ev) {
@@ -2196,6 +2369,7 @@ tr.retiree .titre { text-decoration:line-through }
     if (ev.type === "data") {
       var p = ev.result && ev.result.payload;
       if (p && Array.isArray(p.lignes)) {
+        if (Object.keys(etat.retraits).length) { etat.lectureRetenue = ev; return; }   // shown once the 10 s are over
         // Relu toutes les 15 s : le tableau n'est refait que s'il a changé, la sélection et le focus restent.
         var empreinte = JSON.stringify(Object.assign({}, p, { genere: 0, liste_projets: p.liste_projets ? Object.assign({}, p.liste_projets, { genere: 0 }) : null })), pareil = empreinte === etat.empreinte;
         etat.donnees = p; etat.empreinte = empreinte;

@@ -37,6 +37,7 @@ même, pour l'onglet « Conflits » de la vue projet (`conflits_du_projet`), en 
 session « <Projet> · Conflits Studio » qui les traite. Le lecteur est celui du skill conflits (registre.py), copié à
 côté de ce fichier sous le nom registre_conflits.py.
 """
+import contextlib
 import datetime as dt
 import hashlib
 import importlib.util
@@ -48,6 +49,11 @@ import subprocess
 import sys
 import time
 import unicodedata
+
+try:
+    import fcntl
+except ImportError:   # Windows: no flock, the writes stay as they were
+    fcntl = None
 
 ICI = pathlib.Path(__file__).resolve().parent
 
@@ -128,18 +134,50 @@ def texte_simple(s):
 
 # Les suffixes que le kit d'ingestion ajoute en fin de puce : ` (échéance AAAA-MM-JJ)` puis ` ([source](<lien>))`.
 SUFFIXE_SOURCE = re.compile(r'\(\[([^\]]*)\]\(<?(.+?)>?\)\)\s*$')
-SUFFIXE_ECHEANCE = re.compile(r'\s*\([ée]ch[ée]ance (\d{4}-\d{2}-\d{2})\)\s*$', re.I)
+SUFFIXE_ECHEANCE = re.compile(r'\s*\([ée]ch[ée]ance (\d{4}-\d{2}-\d{2})(?:\s*[,;]\s*([^)]*?))?\)\s*$', re.I)
+# ` (reçu le AAAA-MM-JJ)`: the day a mail reached the PM, written by the ingestion when it knows it.
+SUFFIXE_RECU = re.compile(r'\s*\(re[çc]u le (\d{4}-\d{2}-\d{2})\)\s*$', re.I)
+
+
+def _origine_echeance(note):
+    """Where a due date comes from, read of the note after the date: « (échéance 2026-11-23, lue dans le mail) » →
+    ('lue', ''), « (échéance 2026-11-23, calculée : 8 jours ouvrés après la réception) » → ('calculee', '8 jours ouvrés
+    après la réception'). ('', '') when the ingestion does not say: the page then says it does not know."""
+    note = ' '.join((note or '').split())
+    m = re.match(r'(?i)^(lue?|trouv[ée]e?|[ée]crite?)\b', note)
+    if m:
+        return 'lue', ''
+    m = re.match(r'(?i)^(calcul[ée]e?|d[ée]duite?|estim[ée]e?)\b\s*(?:[:\-]\s*)?(.*)$', note)
+    if m:
+        return 'calculee', m.group(2).strip()
+    return '', ''
 
 
 def decouper_puce(texte):
     """(corps, échéance, lien) d'une puce du kit : le corps sans ses suffixes, l'échéance AAAA-MM-JJ (None si absente
     ou invalide), le lien de la source ('' si absent). Les suffixes sont lus de la fin, dans n'importe quel ordre."""
-    s, echeance, lien = unicodedata.normalize('NFC', str(texte or '')).strip(), None, ''
+    return decouper_puce_meta(texte)[:3]
+
+
+def decouper_puce_meta(texte):
+    """(corps, échéance, lien, meta) : comme `decouper_puce`, plus `meta`, ce que la puce dit de ses dates :
+    `recu` (AAAA-MM-JJ, le jour où le mail est arrivé), `echeance_mode` ('lue' dans le mail, 'calculee', ou '' si la
+    puce ne le dit pas) et `echeance_regle` (la règle de calcul, quand elle est dite). Rien d'inventé : une clé absente
+    est une donnée inconnue."""
+    s, echeance, lien, meta = unicodedata.normalize('NFC', str(texte or '')).strip(), None, '', {}
     s = parc.etiquettes(s)[0]   # « (impact fort : client attend) », « (effort court) »: read apart, never part of the body
     while True:
         m = None if lien else _suffixe_source(s)
         if m:
             lien, s = m.group(2), s[:m.start()].rstrip()
+            continue
+        m = SUFFIXE_RECU.search(s)
+        if m and 'recu' not in meta:
+            try:
+                meta['recu'] = dt.date.fromisoformat(m.group(1)).isoformat()
+            except ValueError:
+                pass
+            s = s[:m.start()]
             continue
         m = SUFFIXE_ECHEANCE.search(s)
         if m and echeance is None:
@@ -147,9 +185,15 @@ def decouper_puce(texte):
                 echeance = dt.date.fromisoformat(m.group(1)).isoformat()
             except ValueError:
                 echeance = ''
+            if echeance:
+                mode, regle = _origine_echeance(m.group(2))
+                if mode:
+                    meta['echeance_mode'] = mode
+                if regle:
+                    meta['echeance_regle'] = regle
             s = s[:m.start()]
             continue
-        return s.strip(), echeance or None, lien
+        return s.strip(), echeance or None, lien, meta
 
 
 def _suffixe_source(s):
@@ -445,9 +489,15 @@ def lire_sources(dossier, maintenant):
     # with the register in the snapshot, for when the Drive refuses the connector.
     vu = parc.lire_json(projet / '.conflits' / 'vu.json', None)
     reglages = parc.lire_json(projet / '.conflits' / 'reglages.json', None)
+    # The backlog's contradictions and decisions (/backlog:nettoyer), parsed, kept for the same reason.
+    try:
+        backlog = lire_backlog(dossier)
+    except OSError:
+        backlog = None
     s = {'pm': pm, 'ingestion': bool(ing), 'ingestion_derniere': derniere, 'passages': sorted(passages, key=lambda n: n['ts']),
          'reglees': reglees, 'lu': maintenant, 'refus': refus, 'conflits': conflits,
-         'conflits_vu': vu if isinstance(vu, dict) else None, 'conflits_reglages': reglages if isinstance(reglages, dict) else None}
+         'conflits_vu': vu if isinstance(vu, dict) else None, 'conflits_reglages': reglages if isinstance(reglages, dict) else None,
+         'backlog': backlog}
     if not refus:
         s['fichiers'] = textes_des_entrees(dossier, s['passages'], maintenant)
     return s
@@ -612,7 +662,151 @@ def _vu_et_reglages(reg, d, instantane=None):
     return n, seuils
 
 
-def conflits_du_projet(dossier, metas=None, instantane=None, depuis_connecteur=False):
+# --- the conflicts a session is settling now, and the backlog's decisions (2026-11-19) ---------------------------
+# The register is not the only place conflicts are handled: /backlog:nettoyer writes its contradictions to
+# backlog/_contexte/contradictions.md, records each PM decision in decisions-pm.md, and asks its questions one at a
+# time in its session, which the board already holds as a question line. The tab shows all three, read-only.
+MARQUEURS_TRI = ('nettoyage du contexte', 'backlog:nettoyer', 'contradictions', 'conflits')   # normalised title parts
+TRI_ACTIF_S = 24 * 3600               # a settling session is « en cours » when active within a day
+SESSION_ID = re.compile(r'^local_[0-9a-f-]{36}$')
+BACKLOG_CONTRADICTIONS = ('backlog', '_contexte', 'contradictions.md')
+BACKLOG_DECISIONS = ('backlog', '_contexte', 'decisions-pm.md')
+
+
+def sessions_qui_tranchent(dossier, metas):
+    """The non-archived sessions of a Studio that settle conflicts: « <Projet> · Conflits Studio… », or, opened in the
+    Studio's folder, a title that holds one of MARQUEURS_TRI. Most recently active first."""
+    d = dossier_normal(dossier)
+    sortie = []
+    for m in metas or []:
+        if not m.get('id') or m.get('archivee'):
+            continue
+        titre = m.get('titre') or ''
+        n = normaliser(titre)
+        if est_session_conflits(titre, d) or (_dans(m.get('cwd'), d) and any(k in n for k in MARQUEURS_TRI)):
+            sortie.append(m)
+    return sorted(sortie, key=lambda m: -(m.get('activite') or 0))
+
+
+def _texte_de_question(l):
+    """(question in full, short options) of a board line, whichever shape it has: the computed board's line
+    (type 'question': titre, detail = the answers) or the parc line (complet / detail = the whole statement)."""
+    if l.get('type') == 'question' and 'affiche_titre' not in l:
+        return texte_simple(l.get('titre') or ''), texte_simple(l.get('detail') or '')
+    texte = texte_simple(l.get('detail') or l.get('complet') or l.get('titre') or l.get('affiche_titre') or '')
+    options = l.get('choix_libelles')
+    if isinstance(options, list):
+        options = ' · '.join(texte_simple(o if isinstance(o, str) else (o or {}).get('libelle') or (o or {}).get('texte') or '')
+                             for o in options)
+    else:
+        options = ''
+    # A menu's statement holds its answers after the question mark (« … que voit-il ? Écran d'attente : … »): the
+    # question alone in bold, the answers in small.
+    if not options.strip(' ·'):
+        m = re.match(r'^(.+?\?)\s+(\S.*)$', texte, re.S)
+        if m:
+            texte, options = m.group(1), m.group(2)
+    return texte, options.strip(' ·')
+
+
+def questions_en_cours(dossier, metas, questions):
+    """The pending board questions of a Studio asked by one of its settling sessions:
+    [{'question', 'options', 'session', 'session_titre', 'depuis'}] (`depuis` as the board gives it)."""
+    tranchent = {m['id']: m for m in sessions_qui_tranchent(dossier, metas)}
+    sortie = []
+    for l in questions or []:
+        if not isinstance(l, dict) or l.get('type') in ('a_toi', 'reunion', 'entree', 'verifier', 'conflits'):
+            continue
+        sid = next((x for x in (session_de_ligne(l), l.get('source'), l.get('session')) if x in tranchent), None)
+        if not sid:
+            continue
+        texte, options = _texte_de_question(l)
+        if texte:
+            sortie.append({'question': texte, 'options': options, 'session': sid,
+                           'session_titre': tranchent[sid].get('titre') or '', 'depuis': l.get('depuis')})
+    return sortie
+
+
+def _date_backlog(iso):
+    m = re.match(r'^(\d{4})-(\d{2})-(\d{2})', str(iso or ''))
+    return f'{m.group(3)}/{m.group(2)}/{m.group(1)}' if m else None
+
+
+def lire_backlog(dossier):
+    """What /backlog:nettoyer left in the Studio: {'releve': 'JJ/MM/AAAA' | None, 'contradictions': n, 'decisions':
+    [{'sujet', 'date', 'choix'}]}, None when neither file exists. OSError when one cannot be read. Lenient: a line it
+    does not understand is skipped."""
+    racine, trouve, sortie = pathlib.Path(dossier), False, {'releve': None, 'contradictions': 0, 'decisions': []}
+    try:
+        texte = lire_texte(racine.joinpath(*BACKLOG_CONTRADICTIONS))['texte']
+        trouve = True
+        m = re.search(r'relevé du (\d{4}-\d{2}-\d{2})', texte.split('\n', 1)[0])
+        sortie['releve'] = _date_backlog(m.group(1)) if m else None
+        sortie['contradictions'] = len(re.findall(r'(?m)^###\s+\d+\.\s+\S', texte))
+    except ABSENT:
+        pass
+    try:
+        texte = lire_texte(racine.joinpath(*BACKLOG_DECISIONS))['texte']
+        trouve = True
+        for ligne in texte.split('\n'):
+            m = re.match(r'^\s*\d+\.\s+(\d{4}-\d{2}-\d{2})\s*·\s*(.+)$', ligne)
+            gras = re.search(r'\*\*(.+?)\*\*', m.group(2)) if m else None
+            if not gras:
+                continue
+            sujet = re.split(r'\s*:\s*\*\*', m.group(2), 1)[0]
+            sujet = re.sub(r'\s*\((?:la )?contradictions?[^)]*\)', '', sujet).strip(' ,;:')
+            if sujet:
+                sortie['decisions'].append({'sujet': couper(sujet, 200), 'date': _date_backlog(m.group(1)),
+                                            'choix': couper(gras.group(1).strip(' .'), 200)})
+    except ABSENT:
+        pass
+    sortie['decisions'] = sortie['decisions'][:200]
+    return sortie if trouve else None
+
+
+def _backlog_du_studio(d, instantane=None):
+    """lire_backlog, else the snapshot's copy when the Drive refuses it; None when unknown. Never an exception."""
+    try:
+        return lire_backlog(d)
+    except OSError:
+        gardee = ((lire_instantane() if instantane is None else instantane).get(d) or {}).get('backlog')
+    except Exception:
+        return None
+    return gardee if isinstance(gardee, dict) and isinstance(gardee.get('decisions'), list) else None
+
+
+def conflits_du_projet(dossier, metas=None, instantane=None, depuis_connecteur=False, questions=None, maintenant=None):
+    """The conflicts tab: what the register gives (conflits_du_registre), plus what is being settled elsewhere:
+    'en_cours' (pending board questions of the Studio's settling sessions: `questions` = the board lines of this Studio),
+    'sessions_actives' (settling sessions active within a day) and 'backlog' ({'releve', 'contradictions', 'decisions'}
+    from backlog/_contexte), whose decisions join 'journal' (« Tranché »). A failure of these costs only these fields."""
+    sortie = conflits_du_registre(dossier, metas, instantane, depuis_connecteur)
+    d = dossier_normal(dossier)
+    maintenant = time.time() if maintenant is None else maintenant
+    sortie.update(en_cours=[], sessions_actives=[], backlog=None)
+    try:
+        sortie['en_cours'] = questions_en_cours(d, metas, questions)
+        sortie['sessions_actives'] = [{'sessionId': m['id'], 'titre': m.get('titre') or '', 'activite': m.get('activite') or 0}
+                                      for m in sessions_qui_tranchent(d, metas)
+                                      if maintenant - (m.get('activite') or 0) <= TRI_ACTIF_S]
+    except Exception:
+        pass
+    try:
+        b = _backlog_du_studio(d, instantane)
+        if b:
+            sortie['backlog'] = {'releve': b.get('releve'), 'contradictions': int(b.get('contradictions') or 0),
+                                 'decisions': len(b['decisions'])}
+            ajoutes = [{'sujet': x['sujet'], 'date': x['date'] or '', 'par': 'le PM', 'choix': x['choix'], 'reponse': '',
+                        'reprise': False, 'origine': 'backlog'} for x in b['decisions']]
+            tous = sorted(sortie['journal'] + ajoutes, key=lambda x: _iso_du_passage(x.get('date')), reverse=True)
+            sortie['journal'] = tous[:JOURNAL_CONFLITS]
+            sortie['tranches'] += len(ajoutes)
+    except Exception:
+        sortie['backlog'] = None
+    return sortie
+
+
+def conflits_du_registre(dossier, metas=None, instantane=None, depuis_connecteur=False):
     """The conflicts tab: {'ouverts': [...], 'illisibles': n, 'session': {...} | None, 'titre_session', 'lu',
     'nouveaux' (open cases the PM has not been shown yet: the tab's dot), 'relance' and 'raison' (the reminder in
     « Ce qui t'attend »), 'a_traiter', 'jours', 'seuils'}.
@@ -740,7 +934,8 @@ def relecture_du_studio(d, dernier_passage, instantane=None, maintenant=None):
     """{'etat', 'a_jour', 'le' (JJ/MM of the Monday pass, or ''), 'sujets', 'texte'} for a Studio checked once.
     `etat`: 'rien' (re-read, nothing new), 'faite' (re-read and judged whole), 'remise' (subjects handed to the morning
     task, not all judged), 'ingestion' (skipped: automatic ingestion active), 'trop' (over the morning point's ceiling),
-    'erreur', 'aucune' (no re-read since the last complete pass). `a_jour` only for 'rien' and 'faite'."""
+    'erreur', 'aucune' (no re-read since the last complete pass). `a_jour` only for 'rien' and 'faite'. `texte` is ''
+    for 'ingestion' and 'aucune': the tab never speaks of a Monday re-read that is no longer promised."""
     passage = _jour_fr(_iso_du_passage(dernier_passage))
     semaine = parc.lire_json(parc.INTERNE / 'conflits-semaine.json', {})
     semaine = semaine if isinstance(semaine, dict) else {}
@@ -764,19 +959,14 @@ def relecture_du_studio(d, dernier_passage, instantane=None, maintenant=None):
     elif etat == 'remise':
         texte = f'Relecture du {le} pas finie : {sujets} remis au point du matin, pas tous jugés. {dernier}'
     elif etat == 'ingestion':
-        texte = (f"Relecture du {le} sautée : l'ingestion automatique passe sur ce Studio, et la relecture du lundi ne "
-                 f'relit pas un Studio où elle passe. Rien de relu depuis. {dernier}')
+        texte = ''     # the Monday re-read is no longer promised (2026-11-17): the check moves into the ingestion
     elif etat == 'trop':
         texte = (f"Relecture du {le} pas faite : {sujets}, plus que ce qu'un point du matin relit. Rien de relu "
                  f'depuis. {dernier}')
     elif etat == 'erreur':
         texte = f"Relecture du {le} en échec : le Studio n'a pas pu être relu. {dernier}"
     else:
-        etat = 'aucune'
-        active = ingestion_recente(d, instantane, maintenant)
-        texte = f'Pas relu depuis le passage complet du {passage}' + (
-            " : l'ingestion automatique passe sur ce Studio, et la relecture du lundi ne relit pas un Studio où elle "
-            'passe.' if active else '.' if active is None else " : la relecture du lundi n'a pas encore tourné sur ce Studio.")
+        etat, texte = 'aucune', ''     # nothing re-read since the last complete pass: the tab says nothing of it
     return {'etat': etat, 'a_jour': etat in ('rien', 'faite'), 'le': le, 'sujets': n, 'texte': texte}
 
 
@@ -882,8 +1072,8 @@ def texte_premiere(c):
                         + (", au-dessus du plafond d'un lancement : un dossier à la fois." if e.get('au_dessus') else '.'))
     if not x:
         morceaux.append("Dans l'onglet « Conflits », « Préparer l'aperçu » le fait tourner maintenant, sur go du coût ; tu valides ensuite quand tu veux.")
-    morceaux.append("Une seule fois ; ensuite l'ingestion automatique inscrit les nouveaux cas, sinon le point du matin du "
-                    "lundi relit ce qui est nouveau ; une relecture reste possible quand tu veux.")
+    morceaux.append("Une seule fois ; ensuite l'ingestion automatique inscrit les nouveaux cas ; une relecture reste "
+                    "possible quand tu veux.")
     return ' '.join(morceaux)
 
 
@@ -916,11 +1106,11 @@ def ligne_verifier_conflits(dossier, c, etat, maintenant, metas):
             'session': sid, 'repli': repli, 'copier': copier, 'dossier': dossier}
 
 
-def ligne_relance_conflits(dossier, metas, maintenant, instantane=None, c=None):
+def ligne_relance_conflits(dossier, metas, maintenant, instantane=None, c=None, questions=None):
     """The reminder line of a Studio's conflicts in « Ce qui t'attend » (PM, 2026-11-10), or None: from 10 open cases
     or 14 days without a treatment (thresholds per Studio, set in the conflicts session), with the button that opens
     « <Projet> · Conflits Studio » (or, without it, the Studio's most recent session). No Slack, no mail."""
-    c = conflits_du_projet(dossier, metas, instantane) if c is None else c
+    c = conflits_du_projet(dossier, metas, instantane, questions=questions) if c is None else c
     if not c.get('relance'):
         return None
     sid, repli = (c['session']['sessionId'], False) if c.get('session') else session_du_studio(dossier, metas)
@@ -933,19 +1123,26 @@ def ligne_relance_conflits(dossier, metas, maintenant, instantane=None, c=None):
             'depuis': maintenant - c.get('jours', 0) * 86400, 'session': sid, 'repli': repli, 'dossier': dossier}
 
 
-def conflits_global(studios_vus, metas, instantane=None):
+def _lignes_du_projet(tableau, dossier):
+    """The board lines of one Studio (their `projet` is the Studio's folder, written composed or decomposed)."""
+    nfc = lambda x: unicodedata.normalize('NFC', str(x or ''))
+    return [l for l in tableau or [] if isinstance(l, dict) and nfc(l.get('projet')) == nfc(dossier)]
+
+
+def conflits_global(studios_vus, metas, instantane=None, tableau=None):
     """The global « Conflits » tab: one row per Studio of the PM with open or unreadable cases (a failure costs only
-    its row)."""
+    its row). A Studio is listed too when a session settling its conflicts has a question open (`tableau`: the board lines)."""
     sortie = []
     for s in studios_vus or []:
         if s.get('role') != 'pm':
             continue
         try:
-            c = conflits_du_projet(s['dossier'], metas, instantane)
+            c = conflits_du_projet(s['dossier'], metas, instantane, questions=_lignes_du_projet(tableau, s['dossier']))
         except Exception:
             continue
-        if c.get('ouverts') or c.get('illisibles'):
-            sortie.append({'nom': s['nom'], 'dossier': s['dossier'], 'ouverts': len(c['ouverts']), 'nouveaux': c['nouveaux'],
+        if c.get('ouverts') or c.get('illisibles') or c.get('en_cours'):
+            sortie.append({'nom': s['nom'], 'dossier': s['dossier'], 'ouverts': len(c['ouverts']), 'en_cours': len(c.get('en_cours') or []),
+                           'nouveaux': c['nouveaux'],
                            'illisibles': c['illisibles'], 'relance': c['relance'], 'raison': c['raison'],
                            'a_traiter': c['a_traiter'], 'session': c['session'], 'titre_session': c['titre_session'],
                            'commande': c['commande'], 'lu': c['lu']})
@@ -1026,6 +1223,38 @@ def session_du_studio(dossier, metas):
     return None, True
 
 
+# A request the ingestion wrote without a link, an author or a channel (2026-11-19): the board names the session that
+# ran that pass, found by the pass time and the Studio's folder, else the Studio file the line was read from.
+FICHIER_INGESTION = 'projet/.ingestion-auto-state.json'   # where the run's report, hence the line, is kept in the Studio
+PASSAGE_AVANT_S = 120      # a pass is stamped by the run itself: a minute or two before the card says it started is still it
+PASSAGE_APRES_S = 600      # ... and a few minutes after its last activity (the card is updated when the turn ends)
+
+
+def session_de_passage(dossier, passage, metas):
+    """(id, title) of the session that ran the ingestion pass stamped `passage` on this Studio, else None. A session
+    of the Studio whose title (or scheduled task) says « ingest » or opens with 📬 and whose window (created → last
+    activity, with a short margin) holds the pass time. Several: the same title for all, the latest created; two
+    different titles is a doubt, so none."""
+    d = dossier_normal(dossier)
+    if not passage:
+        return None
+    trouvees = []
+    for m in metas or []:
+        if not m.get('id') or not _dans(m.get('cwd'), d):
+            continue
+        titre = m.get('titre') or ''
+        if not (titre.startswith('📬') or 'ingest' in normaliser(titre) or 'ingest' in normaliser(m.get('tache') or '')):
+            continue
+        fin = m.get('activite') or 0
+        debut = m.get('creee') or fin
+        if debut - PASSAGE_AVANT_S <= passage <= fin + PASSAGE_APRES_S:
+            trouvees.append(m)
+    if not trouvees or len({normaliser(m.get('titre')) for m in trouvees}) > 1:
+        return None
+    m = max(trouvees, key=lambda x: (x.get('creee') or 0, x.get('activite') or 0))
+    return m['id'], m.get('titre') or ''
+
+
 def session_de_ligne(l):
     if l.get('ouvrir'):
         return l['ouvrir']
@@ -1048,6 +1277,60 @@ def ecrire_etat(lignes):
         parc.ecrire_atomique(_etat_chemin(), json.dumps({'version': 1, 'lignes': lignes}, ensure_ascii=False, indent=1))
     except OSError:
         pass   # un autre passage écrit au même instant : le suivant reprendra
+
+
+# Lost update measured on 2026-11-18 (23:11): a « Fait » closed a line at 23:11:22, a computation that had read the state
+# before wrote it back at 23:11:24 and the line came back. Every read-modify-write of projets-etat.json now holds this
+# lock (the connector's two instances, the session hook, the command line), and the computation, which reads long
+# before it writes, re-reads the disk under the lock and keeps what a click or a judgement wrote since its read.
+@contextlib.contextmanager
+def verrou_etat():
+    chemin = _etat_chemin().with_name('projets-etat.verrou')
+    fd = None
+    try:
+        chemin.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(chemin, os.O_RDWR | os.O_CREAT, 0o600)
+        if fcntl:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+    except OSError:
+        pass   # no lock possible: write as before
+    try:
+        yield
+    finally:
+        if fd is not None:
+            try:
+                if fcntl:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+
+
+def fusionner_etat(lu, calcule, disque):
+    """The state a computation writes: its own result, plus what changed on disk since it read the state (a « Fait »,
+    a reopening, a Slack judgement, a suite): for a line someone else changed, each field that differs between what the
+    computation read and the disk takes the disk's value; a line added since is kept. The computation's own changes
+    stay on the other fields."""
+    out = dict(calcule)
+    for cle, d in disque.items():
+        avant = lu.get(cle)
+        if avant is None:
+            if cle not in calcule:
+                out[cle] = d
+            continue
+        if d == avant or cle not in calcule:
+            continue
+        ligne = dict(calcule[cle])
+        for champ in set(d) | set(avant):
+            if d.get(champ, _ABSENT) != avant.get(champ, _ABSENT):
+                if champ in d:
+                    ligne[champ] = d[champ]
+                else:
+                    ligne.pop(champ, None)
+        out[cle] = ligne
+    return out
+
+
+_ABSENT = object()
 
 
 def _noter(etat, cle, studio, type_, titre, premiere):
@@ -1073,7 +1356,7 @@ def lignes_du_studio(dossier, r, e, metas, etat, maintenant, debut, sources=None
         t, entres, actions = n['ts'], n['entres'], n['actions']
         if r == 'pm':
             for a in actions:
-                corps, echeance, lien = decouper_puce(a)
+                corps, echeance, lien, dates = decouper_puce_meta(a)
                 cle = _cle_a_toi_migree(etat, dossier, a)
                 # Notée seulement si son passage a moins de 14 jours ; ensuite elle reste jusqu'à sa fermeture.
                 if cle in etat or maintenant - t < FENETRE_A_TOI_S:
@@ -1084,6 +1367,11 @@ def lignes_du_studio(dossier, r, e, metas, etat, maintenant, debut, sources=None
                     ligne['passage'] = max(ligne.get('passage') or 0, t)
                     if echeance:
                         ligne['echeance'] = echeance
+                        # What the latest pass says of the date replaces the older word: a date moved is not « lue » any more.
+                        ligne.pop('echeance_mode', None), ligne.pop('echeance_regle', None)
+                        ligne.update({k: dates[k] for k in ('echeance_mode', 'echeance_regle') if dates.get(k)})
+                    if dates.get('recu'):
+                        ligne['recu'] = dates['recu']
                     if lien:
                         ligne['lien'] = lien
                     dit = parc.etiquettes(unicodedata.normalize('NFC', str(a)))[1]
@@ -1159,14 +1447,25 @@ def lignes_du_studio(dossier, r, e, metas, etat, maintenant, debut, sources=None
                         pm['reclassee'], ancienne = vu['reclassee'], vu['ancienne']
                 # A Slack line judged by the morning check shows its short summary, never the message (PM, Q8).
                 resume = ligne.get('resume') or ''
+                auteur, canal = ligne.get('qui') or auteur_demande(texte), canal_du_lien(ligne.get('lien'), canaux)
+                ligne_sid, ligne_repli, origine = sid, repli, {}
+                if not (ligne.get('lien') or auteur or canal):
+                    # Nothing says where it came from: the session that ran that pass, else the file it was read from.
+                    trouvee = session_de_passage(dossier, ligne.get('passage'), metas)
+                    if trouvee:
+                        ligne_sid, ligne_repli, origine = trouvee[0], False, {'origine_session': trouvee[1]}
+                    else:
+                        origine = {'origine_fichier': FICHIER_INGESTION}
                 ouvertes.append({'cle': cle, 'type': 'a_toi', 'titre': couper(resume) if resume else ligne['titre'],
-                                 'texte': resume or texte, **priorite, **pm,
+                                 'texte': resume or texte, **priorite, **pm, **origine,
                                  'commande': commande_de(texte), 'detail': '',
                                  'passage': int(ligne['passage'] * 1000) if ligne.get('passage') else None,
-                                 'depuis': ligne['premiere'], 'session': sid, 'repli': repli,
+                                 'depuis': ligne['premiere'], 'session': ligne_sid, 'repli': ligne_repli,
                                  'echeance': ligne.get('echeance'), 'lien': ligne.get('lien') or '', 'dossier': dossier,
-                                 'ancienne': ancienne, 'auteur': ligne.get('qui') or auteur_demande(texte),
-                                 'canal': canal_du_lien(ligne.get('lien'), canaux)})
+                                 'ancienne': ancienne, 'auteur': auteur, 'canal': canal,
+                                 'mail': origine_entree(ligne.get('lien'), texte).startswith('Mail'),
+                                 'recu': ligne.get('recu') or None, 'echeance_mode': ligne.get('echeance_mode') or '',
+                                 'echeance_regle': ligne.get('echeance_regle') or ''})
     if r == 'pm':
         if reunions is not None:
             vues = set()
@@ -1522,8 +1821,9 @@ def calculer(e=None, maintenant=None, metas=None, ecrire=True, depuis_connecteur
                                          regles)
         if r == 'pm':
             try:
-                c = conflits_du_projet(d, metas, instantane)
-                relance = ligne_relance_conflits(d, metas, maintenant, instantane, c)
+                qs = _lignes_du_projet(e.get('tableau'), d)
+                c = conflits_du_projet(d, metas, instantane, questions=qs)
+                relance = ligne_relance_conflits(d, metas, maintenant, instantane, c, qs)
                 verifier = ligne_verifier_conflits(d, c, etat, maintenant, metas)
             except Exception:
                 relance = verifier = None   # a failure costs only these lines
@@ -1548,6 +1848,18 @@ def calculer(e=None, maintenant=None, metas=None, ecrire=True, depuis_connecteur
                                                  and (l['type'] != 'a_toi' or maintenant - max(l.get('passage') or 0, l.get('premiere') or 0) > LECTURE_S))
                 or (l['type'] == 'entree' and maintenant - (l.get('premiere') or 0) > PURGE_S)]:
         del etat[cle]
+    if ecrire:
+        # Under the lock, against the disk as it is now: a click made during the computation is kept.
+        with verrou_etat():
+            disque = lire_etat()
+            calcule = etat
+            etat = fusionner_etat(json.loads(avant), calcule, disque)
+            if json.dumps(etat, sort_keys=True) != json.dumps(disque, sort_keys=True):
+                ecrire_etat(etat)
+        fermees_ailleurs = {k for k, l in etat.items() if l.get('fermee') and not (calcule.get(k) or {}).get('fermee')}
+        if fermees_ailleurs:
+            for p in projets:
+                p['lignes'] = [l for l in p['lignes'] if l.get('cle') not in fermees_ailleurs]
     roles = {p['dossier']: p['role'] for p in projets}
     for p in projets:
         fermees = sorted((l for l in etat.values() if l['studio'] == p['dossier'] and l['fermee']
@@ -1563,8 +1875,6 @@ def calculer(e=None, maintenant=None, metas=None, ecrire=True, depuis_connecteur
               'projets': [dict(p, lignes=[dict(l, depuis=int(l['depuis'] * 1000)) for l in p['lignes']])
                           for p in projets]}
     if ecrire:
-        if json.dumps(etat, sort_keys=True) != avant:
-            ecrire_etat(etat)
         ecrire_sorties(sortie, maintenant, depuis_connecteur)
         if not depuis_connecteur:
             ecrire_instantane(lues, maintenant)
@@ -1749,15 +2059,36 @@ def ecarter_etape(cle, maintenant=None):
 def fermer(cle, maintenant=None):
     """Ferme à la main une ligne ouverte (par = 'main'). ValueError pour une clé inconnue ou déjà fermée."""
     maintenant = time.time() if maintenant is None else maintenant
-    etat = lire_etat()
-    ligne = etat.get(cle) if isinstance(cle, str) and CLE.match(cle) else None
-    if not ligne:
-        raise ValueError('ligne inconnue')
-    if ligne['fermee']:
-        raise ValueError('ligne déjà fermée')
-    ligne.update(fermee=maintenant, par='main')
-    ecrire_etat(etat)
+    with verrou_etat():
+        etat = lire_etat()
+        ligne = etat.get(cle) if isinstance(cle, str) and CLE.match(cle) else None
+        if not ligne:
+            raise ValueError('ligne inconnue')
+        if ligne['fermee']:
+            raise ValueError('ligne déjà fermée')
+        ligne.update(fermee=maintenant, par='main')
+        ecrire_etat(etat)
     return {'ferme': cle}
+
+
+ROUVRIR_S = 60   # « Annuler » reopens only a closure of the PM's own click, made less than a minute ago
+
+
+def rouvrir(cle, maintenant=None):
+    """« Annuler » after « Fait » (the page sends « clore » at the click, then gives 10 s to take it back): reopens a
+    line closed by hand (par = 'main') less than ROUVRIR_S ago. ValueError otherwise: a closure by a source, the
+    morning check or Slack, or an older one, is never undone from the page."""
+    maintenant = time.time() if maintenant is None else maintenant
+    with verrou_etat():
+        etat = lire_etat()
+        ligne = etat.get(cle) if isinstance(cle, str) and CLE.match(cle) else None
+        if not ligne:
+            raise ValueError('ligne inconnue')
+        if not ligne['fermee'] or ligne.get('par') != 'main' or not 0 <= maintenant - ligne['fermee'] <= ROUVRIR_S:
+            raise ValueError('rien à annuler')
+        ligne.update(fermee=None, par=None)
+        ecrire_etat(etat)
+    return {'rouvert': cle}
 
 
 # --- Lignes Slack réglées dans leur fil (PM, Q6, 2026-11-17) ------------------------------------------------
@@ -1766,7 +2097,7 @@ def fermer(cle, maintenant=None):
 # (11 h, 14 h, 17 h) lit le fil de chaque ligne ouverte (slack_ouvertes) et rend son jugement (slack_juger) : le PM a
 # répondu après la demande, la ligne se ferme ; sa réponse annonce une suite, la suite prend sa place. Elle écrit aussi
 # le résumé court de chaque ligne (PM, Q8) : le tableau ne recopie jamais le message ni le fil.
-# Un calcul concurrent peut écraser un jugement : la ligne reste alors ouverte et le passage suivant la juge à nouveau.
+# Le jugement s'écrit sous le verrou de l'état, et un calcul concurrent le garde (fusionner_etat, 2026-11-18).
 # La preuve d'une fermeture est un message plus tardif que la demande (mesuré le 2026-11-18 : 3 fermetures sur 8 étaient à tort,
 # dont une suite fermée avec le message qui l'avait créée) : le lien de la demande, celui du message parent du fil ou un message
 # antérieur ne ferment rien. Le jugement est écarté, la ligne reste ouverte.
@@ -1838,6 +2169,11 @@ def slack_juger(jugements, maintenant=None):
     maintenant = time.time() if maintenant is None else maintenant
     if not isinstance(jugements, list):
         raise ValueError('« jugements » doit être une liste')
+    with verrou_etat():
+        return _slack_juger(jugements, maintenant)
+
+
+def _slack_juger(jugements, maintenant):
     etat = lire_etat()
     fermees, suites, resumes, ecartes = [], 0, 0, []
     for j in jugements[:200]:
