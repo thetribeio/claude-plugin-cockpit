@@ -33,7 +33,7 @@ Le dossier du plugin change à chaque version : l'app lance les copies posées d
    - Le PM colle `/cockpit:mon-studio point du matin` ou `/cockpit:mon-studio terminal` (bouton d'une étape du bloc « Mise en route »), ou demande l'une de ces étapes en ses mots : « Mise en route » plus bas, quel que soit `todo`.
    - Le PM demande de désactiver Mon Studio (« désactive Mon Studio », « je n'en veux plus ») : étape 5, quel que soit `todo`.
    - Le PM demande la page d'un projet (« épingle-moi le projet X ») ou de la retirer : « Épingler un projet » plus bas, quel que soit `todo`.
-   - Le PM demande d'allumer ou de couper un interrupteur (« allume les réponses directes », « coupe les autorisations depuis la page », « je veux la règle des heures de publication », « coupe le contrôle du modèle », « coupe le contrôle du format », « mon nom est Prénom Nom ») : « Interrupteurs » plus bas, quel que soit `todo`.
+   - Le PM demande d'allumer ou de couper un interrupteur (« allume les réponses directes », « coupe les autorisations depuis la page », « je veux la règle des heures de publication », « coupe le contrôle du modèle », « coupe le contrôle du format », « coupe le réglage d'ouverture », « coupe le contrôle du barème », « mon nom est Prénom Nom ») : « Interrupteurs » plus bas, quel que soit `todo`.
    - `unsupported` ou `no_app` : Mon Studio demande un Mac avec l'app Claude. Dis-le en une ligne et arrête. Sous Windows ou Linux, `install.py apply` refuse de toute façon : ses chemins sont ceux de macOS.
    - `disabled` : le PM a désactivé Mon Studio (`disabledAt`). S'il demande à le remettre, suis `install` (étape 2), comme un premier lancement. Sinon, dis-le en une ligne et arrête.
    - `delete_morning_tasks` (avec `disabled`) : Mon Studio est désactivé mais des tâches du matin existent encore dans l'app (`morningTasksLeft`) et tournent chaque jour ouvré. Supprime-les avec `delete_scheduled_task`, sans redemander : le go de la désactivation les a nommées. Une ligne pour le dire.
@@ -136,6 +136,8 @@ python3 "<Base directory>/scripts/install.py" switch rangement-heures <heures, 2
 python3 "<Base directory>/scripts/install.py" switch reclassement on|off
 python3 "<Base directory>/scripts/install.py" switch controle-modele on|off
 python3 "<Base directory>/scripts/install.py" switch controle-format on|off
+python3 "<Base directory>/scripts/install.py" switch reglage-ouverture on|off
+python3 "<Base directory>/scripts/install.py" switch controle-bareme on|off
 python3 "<Base directory>/scripts/install.py" switch pm "Prénom Nom"
 ```
 
@@ -144,6 +146,8 @@ python3 "<Base directory>/scripts/install.py" switch pm "Prénom Nom"
 - `rangement` : allumé par défaut. Les sessions finies d'une seule action sont proposées au rangement sur la page, archivées sur le seul « Ranger » du PM (« Rangement des sessions finies » plus bas). « Coupe le rangement » : `switch rangement off` ; « rallume le rangement » : `on` ; « range après 48 h » : `switch rangement-heures 48`.
 - `controle-modele` : allumé par défaut. Un lancement de session ou de sous-agent sans modèle est refusé à chaque fois, avec le barème, dans les sessions de l'app de bureau seulement. « Coupe le contrôle du modèle » : `switch controle-modele off` ; « rallume le contrôle du modèle » : `on`.
 - `controle-format` : allumé par défaut. Un bloc « À trancher » mal formé renvoie la session une fois le reposter, dans les sessions de l'app de bureau seulement. « Coupe le contrôle du format » : `switch controle-format off` ; « rallume le contrôle du format » : `on`.
+- `reglage-ouverture` : allumé par défaut. Au premier message de chaque session, Claude règle lui-même son modèle et son effort selon le barème et l'annonce en une ligne ; Fable et Opus high sont seulement proposés. « Coupe le réglage d'ouverture » : `switch reglage-ouverture off` ; « rallume-le » : `on`.
+- `controle-bareme` : allumé par défaut. Un sous-agent en Opus ou Fable sans « [modèle justifié] » dans son prompt, une session lancée sans modèle ou en Fable sans « [fable demandé] » est refusé. « Coupe le contrôle du barème » : `switch controle-bareme off` ; « rallume-le » : `on`. Ces deux hooks se taisent tant que le PM garde sa propre copie dans `~/.claude/hooks/`.
 - `pm` : le nom du PM tel que les fiches projet l'écrivent (« mon nom est Prénom Nom » : `switch pm "Prénom Nom"`). Un projet est « à toi » quand ce nom est celui de la ligne « PM » de sa fiche ; le nom vient du réglage, sinon de git, sinon du nom du compte Mac. `switch pm ""` retire le réglage ; `install.py status` donne `pmName` et `pmNameSource`.
 
 ## Rangement des sessions finies

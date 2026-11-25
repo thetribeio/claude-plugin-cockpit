@@ -63,6 +63,11 @@ Answering an authorization from the page is off by default, and nothing here tur
                                            once (hooks/modele_lancement.py; on by default, desktop app sessions only)
     switch controle-format on|off          controle_format: a malformed « À trancher » block is sent back once
                                            (hooks/format_questions.py; on by default, desktop app sessions only)
+    switch reglage-ouverture on|off        reglage_ouverture: on a session's first message, Claude sets its own model
+                                           and effort per the scale (hooks/reglage_ouverture.py; on by default)
+    switch controle-bareme on|off          controle_bareme: an Opus or Fable sub-agent without « [modèle justifié] », a
+                                           launched session without a model or in Fable without « [fable demandé] » is
+                                           refused (hooks/bareme_modele.py; on by default)
     switch pm "<Prénom Nom>"               pm: the PM's name as the project sheets write it, which makes a project
                                            « à toi »; an empty name ("") removes it (then git's user.name, then the
                                            Mac account's full name)
@@ -884,6 +889,8 @@ def status():
         'reclassementTableau': state.get('reclassement_tableau') is True,
         'controleModele': state.get('controle_modele') is not False,
         'controleFormat': state.get('controle_format') is not False,
+        'reglageOuverture': state.get('reglage_ouverture') is not False,
+        'controleBareme': state.get('controle_bareme') is not False,
         'rangementHeures': state.get('rangement_heures') or 24,
         'decoupeSeuilTokens': state.get('decoupe_seuil_tokens'),
         'reglesOptionnelles': state.get('regles_optionnelles') or [],
@@ -1052,6 +1059,13 @@ def plan():
     if state.get('controle_format') is not False:
         lines.append('renverrait une fois la session reposter un bloc « À trancher » mal formé (sessions de l\'app '
                      'seulement ; « coupe le contrôle du format » l\'arrête)')
+    if state.get('reglage_ouverture') is not False:
+        lines.append('dirait à chaque session, à son premier message, de régler elle-même son modèle et son effort selon '
+                     'le barème et de l\'annoncer en une ligne, ton accord demandé seulement pour Fable et Opus high '
+                     '(« coupe le réglage d\'ouverture » l\'arrête)')
+    if state.get('controle_bareme') is not False:
+        lines.append('refuserait un sous-agent en Opus ou Fable sans raison donnée, et une session lancée en Fable sans '
+                     'ta demande (« coupe le contrôle du barème » l\'arrête)')
     lines.extend(cost_lines())
     lines.extend(paste_block())
     return lines
@@ -1113,6 +1127,8 @@ COSTS = [
 # Items that cost tokens but were not measured on the author's seat (introduced after the measure, or too rare to
 # measure): the plan names them without a figure rather than an invented one. (item, what it costs)
 UNMEASURED = [
+    ('la consigne de réglage, au premier message de chaque session',
+     'environ 250 tokens, une fois par session, relus à chaque appel suivant de la session'),
     ('la reprise d\'une session par un bouton de réponse',
      'un tour de la session (`claude --resume -p`) avec la relecture de son contexte, au modèle de la session ; '
      'le même tour que si tu répondais dans la session'),
@@ -1769,7 +1785,8 @@ def disable():
 
 BOOLEAN_SWITCHES = {'autorisations': 'autorisations_tableau', 'reponses-directes': 'reponses_directes',
                     'rangement': 'rangement_auto', 'reclassement': 'reclassement_tableau',
-                    'controle-modele': 'controle_modele', 'controle-format': 'controle_format'}
+                    'controle-modele': 'controle_modele', 'controle-format': 'controle_format',
+                    'reglage-ouverture': 'reglage_ouverture', 'controle-bareme': 'controle_bareme'}
 OPTIONAL_RULES = PLUGIN_ROOT / 'regles' / 'optionnelles'
 SEUIL_MIN = 50000
 

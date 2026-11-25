@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.12 · 2026-11-25
+
+Le barème modèle et effort passe d'un texte à deux hooks, pour tous les PM. Effet pour le PM : chaque session démarre au réglage qui convient à sa demande, et un sous-agent ou une session lancée ne part plus en Opus ou en Fable sans raison.
+
+- Réglage d'ouverture (`hooks/reglage_ouverture.py`) : au premier message d'une session, la consigne de régler soi-même son modèle et son effort selon le barème (`set_session_model`, `set_session_effort`) et de l'annoncer en une ligne. Pour Fable et Opus high, la session propose et attend le oui du PM. La règle 6 de `regles/modele-effort.md` le dit ; le plafond des règles passe de 10 000 à 10 500 octets pour elle (10 369).
+- Contrôle du barème (`hooks/bareme_modele.py`) : un sous-agent en Opus ou Fable est refusé sans « [modèle justifié] <raison> » dans son prompt ; une session lancée est refusée sans modèle, ou en Fable sans « [fable demandé] ». Un fork, une offre et un `proposal_id` passent. Une session sans modèle que le contrôle du modèle au lancement refuse déjà ne reçoit qu'un refus.
+- Allumés par défaut ; `install.py switch reglage-ouverture off` et `switch controle-bareme off` les coupent (`reglage_ouverture`, `controle_bareme` dans cockpit.json), et le plan d'installation les annonce.
+- Un PM qui a déjà sa propre copie de l'un de ces hooks dans `~/.claude/hooks/` (ou sous `$CLAUDE_CONFIG_DIR`) ne la reçoit pas deux fois : celui du plugin se tait tant que la copie est là, et la copie peut être retirée.
+- Limites connues : le coût de la consigne d'ouverture (environ 250 tokens par session, relus ensuite) n'est pas mesuré ; aucun des deux hooks n'a encore été vu en session réelle sous le plugin, seulement dans leur version personnelle.
+
 ## 0.3.11 · 2026-11-19
 
 Trois retouches de Mon Studio vues à l'usage. Effet pour le PM : un texte d'envoi ne recouvre plus le titre d'une question, une ligne Mail dit d'où vient son échéance, et un clic sur un projet filtre le tableau au lieu de sauter à un groupe.

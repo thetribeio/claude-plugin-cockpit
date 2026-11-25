@@ -81,6 +81,22 @@ class Switches(unittest.TestCase):
         self.assertIn('switch controle-format on|off', usage)
         self.assertEqual(self.state()['version'], '0.1.0')   # nothing else touched
 
+    def test_the_two_hooks_of_the_scale_have_a_switch(self):
+        st = self.i.status()
+        self.assertTrue(st['reglageOuverture'])   # on by default
+        self.assertTrue(st['controleBareme'])
+        for nom, cle, champ in (('reglage-ouverture', 'reglage_ouverture', 'reglageOuverture'),
+                                ('controle-bareme', 'controle_bareme', 'controleBareme')):
+            code, out = self.run_main('switch', nom, 'off')
+            self.assertEqual((code, out.strip()), (0, f'{cle} : coupé.'))
+            self.assertIs(self.state()[cle], False)
+            self.assertFalse(self.i.status()[champ])
+            self.assertEqual(self.run_main('switch', nom, 'on')[1].strip(), f'{cle} : allumé.')
+        usage = self.run_main('switch', 'tout', 'on')[1]
+        self.assertIn('switch reglage-ouverture on|off', usage)
+        self.assertIn('switch controle-bareme on|off', usage)
+        self.assertEqual(self.state()['version'], '0.1.0')   # nothing else touched
+
     def test_the_pm_name_is_set_by_a_switch(self):
         self.assertEqual((self.i.status()['pmName'], self.i.status()['pmNameSource']), ('', 'aucun'))
         code, out = self.run_main('switch', 'pm', '  Camille   Exemple ')
