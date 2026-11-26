@@ -70,13 +70,13 @@ class Base(unittest.TestCase):
 
 class CeQueLeLundiNote(Base):
     def test_a_never_checked_studio_is_not_noted(self):
-        self.assertEqual(self.m.passes_de_la_semaine(self.studios, LUNDI), [])
+        self.assertEqual(self.m.passes_du_jour(self.studios, LUNDI), [])
         self.assertEqual(self.note()['studios'], {})
         self.assertIsNone(self.p.conflits_du_projet(self.d, [])['relecture'])
 
     def test_a_pass_handed_to_the_morning_task(self):
         self.verifie('2026-01-01')
-        passes = self.m.passes_de_la_semaine(self.studios, LUNDI)
+        passes = self.m.passes_du_jour(self.studios, LUNDI)
         self.assertEqual(self.note()['studios'], {self.d: {'etat': 'ouverte', 'sujets': passes[0]['sujets']}})
         r = self.relecture()
         self.assertEqual((r['etat'], r['a_jour'], r['le']), ('remise', False, '16/11'))
@@ -92,27 +92,24 @@ class CeQueLeLundiNote(Base):
         self.verifie('2026-01-01')
         with mock.patch.object(self.conflits, 'passe_du_matin', return_value=None), \
                 mock.patch.object(self.m, '_charger_conflits', return_value=self.conflits):
-            self.assertEqual(self.m.passes_de_la_semaine(self.studios, LUNDI), [])
+            self.assertEqual(self.m.passes_du_jour(self.studios, LUNDI), [])
         self.assertEqual(self.note()['studios'], {self.d: {'etat': 'rien'}})
         r = self.relecture()
         self.assertEqual((r['etat'], r['a_jour']), ('rien', True))
         self.assertEqual(r['texte'], 'Relu le 16/11 : rien de nouveau depuis le passage complet du 01/01.')
 
-    def test_skipped_for_an_active_ingestion(self):
-        self.verifie()
+    def test_an_active_ingestion_no_longer_skips_the_pass(self):
+        # 2026-11-23 (Q16): the detection after ingestion wrote nothing in twelve days; the morning pass reads anyway.
+        self.verifie('2026-01-01')
         self.ingestion(LUNDI - 86400)
-        self.assertEqual(self.m.passes_de_la_semaine(self.studios, LUNDI), [])
-        self.assertEqual(self.note()['studios'], {self.d: {'etat': 'ingestion'}})
-        r = self.relecture()
-        self.assertEqual((r['etat'], r['a_jour'], r['le']), ('ingestion', False, '16/11'))
-        # The Monday re-read is no longer promised (2026-11-17): no sentence about it.
-        self.assertEqual(r['texte'], '')
+        passes = self.m.passes_du_jour(self.studios, LUNDI)
+        self.assertEqual(self.note()['studios'], {self.d: {'etat': 'ouverte', 'sujets': passes[0]['sujets']}})
 
     def test_too_large(self):
         self.verifie('2026-01-01')
         self.conflits.PASSE_MATIN_CARACTERES = 100
         with mock.patch.object(self.m, '_charger_conflits', return_value=self.conflits):
-            self.assertEqual(self.m.passes_de_la_semaine(self.studios, LUNDI), [])
+            self.assertEqual(self.m.passes_du_jour(self.studios, LUNDI), [])
         x = self.note()['studios'][self.d]
         self.assertEqual(x['etat'], 'trop')
         self.assertGreater(x['sujets'], 0)
@@ -121,11 +118,21 @@ class CeQueLeLundiNote(Base):
         self.assertIn('Relecture du 16/11 pas faite', r['texte'])
         self.assertIn("plus que ce qu'un point du matin relit", r['texte'])
 
+    def test_a_complete_pass_the_same_day_replaces_too_large(self):
+        self.verifie('2026-01-01')
+        self.conflits.PASSE_MATIN_CARACTERES = 100
+        with mock.patch.object(self.m, '_charger_conflits', return_value=self.conflits):
+            self.m.passes_du_jour(self.studios, LUNDI)
+        self.verifie('2026-11-16')         # the catch-up, judged whole later that Monday
+        r = self.relecture()
+        self.assertEqual((r['etat'], r['a_jour']), ('faite', True))
+        self.assertEqual(r['texte'], 'Relu le 16/11 : les nouveautés sont jugées.')
+
     def test_a_failure_is_noted_and_never_stops_the_morning_point(self):
         self.verifie('2026-01-01')
         with mock.patch.object(self.conflits, 'passe_du_matin', side_effect=RuntimeError('lecture')), \
                 mock.patch.object(self.m, '_charger_conflits', return_value=self.conflits):
-            self.assertEqual(self.m.passes_de_la_semaine(self.studios, LUNDI), [])
+            self.assertEqual(self.m.passes_du_jour(self.studios, LUNDI), [])
         self.assertEqual(self.note()['studios'], {self.d: {'etat': 'erreur'}})
         r = self.relecture()
         self.assertEqual((r['etat'], r['a_jour']), ('erreur', False))

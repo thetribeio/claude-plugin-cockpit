@@ -128,6 +128,10 @@ class Tasks(unittest.TestCase):
         self.assertEqual(lines[0]['session'], 'Rattrapage des conflits')
 
     def test_a_pending_authorization_can_go_to_one_click(self):
+        # The PermissionRequest hook traced the request (hooks/autorisation.py): without it, the tool only runs long.
+        (parc.INTERNE / 'demandes-autorisation').mkdir(parents=True, exist_ok=True)
+        (parc.INTERNE / 'demandes-autorisation' / 'cli1.json').write_text(json.dumps({'t': NOW, 'outil': 'Bash'}))
+        self.addCleanup((parc.INTERNE / 'demandes-autorisation' / 'cli1.json').unlink)
         lines, _ = self.lines([prompt(3), tool(2.9, 'a', 'Bash', {'command': 'git push'})])
         l = lines[0]
         self.assertEqual((l['arret'], l['bloque'], l['extrait']), ('authorization', True, 'commande du terminal · git push'))

@@ -318,8 +318,9 @@ class Page(unittest.TestCase):
         self.assertIn('data-reclasser="ensuite|r00000000000a"', t)
         self.assertIn('data-reclasser="dabord|r00000000000b"', t)
         self.assertIn('data-reclasser="dabord|' + 'b' * 12 + '"', t)   # a request of the ingestion too
-        self.assertEqual(t.count('>Pas si urgent<'), 1)
-        self.assertEqual(t.count(">À faire d'abord<"), 2)
+        # An icon each (PM, 2026-11-26: one line for the gestures), its name for screen readers and on hover.
+        self.assertEqual(t.count('aria-label="Pas si urgent"'), 1)
+        self.assertEqual(t.count('aria-label="À faire d&#39;abord"') + t.count('aria-label="À faire d\'abord"'), 2)
         self.assertIn('data-reclasser="dabord|r00000000000c"', r['attendre'])   # « Peut attendre » is the main board too
 
     def test_none_in_one_click_nor_anciennes(self):
@@ -336,7 +337,7 @@ class Page(unittest.TestCase):
         self.order(t, "D'abord <span", 'Question ordinaire', 'Ensuite <span', 'Caler le point')
         self.assertIn('<span class="raison">classé par toi</span>', t)
         self.assertIn('data-reclasser="annuler|r00000000000b"', t)
-        self.assertEqual(r['compte'], "2 à faire d'abord")
+        self.assertEqual(r['compte'], "2 à faire d'abord au tableau")
         # Out of « D'abord », the line says who put it there.
         r = run_page(lignes=LIGNES, liste_projets=PROJETS, reclassement=True, cliquer=[['data-reclasser', 'ensuite|r00000000000a']])
         self.assertNotIn("D'abord <span", r['tableau'])   # nothing first any more: one list, as in 0.2.23

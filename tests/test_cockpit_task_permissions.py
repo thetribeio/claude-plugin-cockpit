@@ -95,7 +95,8 @@ class Rules(Base):
     def test_apply_adds_the_rules_to_a_missing_file(self):
         self.assertEqual(self.i.status()['scriptRules'], 'missing')
         self.run_quiet(self.apply_with_go)
-        self.assertEqual(self.settings(), {'permissions': {'allow': self.i.SCRIPT_RULES}})
+        # Since 2026-11-26 every apply also denies the sessions the page's three action tools: that is the `deny` list.
+        self.assertEqual(self.settings(), {'permissions': {'deny': self.i.ACTION_TOOLS, 'allow': self.i.SCRIPT_RULES}})
         s = self.i.status()
         self.assertEqual(s['scriptRules'], 'present')
         self.assertNotIn('allow_scripts', s['todo'])
@@ -111,13 +112,13 @@ class Rules(Base):
         after = self.settings()
         self.assertEqual(after['permissions']['allow'], ['Bash(ls *)'] + self.i.SCRIPT_RULES)
         self.assertEqual({k: v for k, v in after.items() if k != 'permissions'}, {'model': 'opus', 'hooks': {'Stop': []}})
-        self.assertEqual(after['permissions']['deny'], ['Read(x)'])
+        self.assertEqual(after['permissions']['deny'], ['Read(x)'] + self.i.ACTION_TOOLS)
         backups = list(self.i.CLAUDE_SETTINGS.parent.glob('settings.json.avant-mon-studio-*'))
-        self.assertEqual(len(backups), 1)
-        self.assertEqual(json.loads(backups[0].read_text(encoding='utf-8')), before)
+        self.assertEqual(len(backups), 2, 'one copy before each of the two changes (deny, then allow)')
+        self.assertIn(before, [json.loads(b.read_text(encoding='utf-8')) for b in backups])
         self.assertIn('autorisé   5 gestes du point du matin', out)
         self.run_quiet(self.apply_with_go)
-        self.assertEqual(len(list(self.i.CLAUDE_SETTINGS.parent.glob('settings.json.avant-mon-studio-*'))), 1,
+        self.assertEqual(len(list(self.i.CLAUDE_SETTINGS.parent.glob('settings.json.avant-mon-studio-*'))), 2,
                          'nothing to add: no copy, no write')
 
     def test_an_unreadable_file_is_never_written(self):
@@ -141,13 +142,12 @@ class Rules(Base):
         # 2026-11-10: `repair` added the rules on the maintainer's Mac without his go; only `apply` does, after it.
         self.assertFalse(self.i.CLAUDE_SETTINGS.exists())
         out = self.run_quiet(lambda: self.i.main(['repair']))
-        self.assertFalse(self.i.CLAUDE_SETTINGS.exists(), out)
+        self.assertEqual(self.settings(), {'permissions': {'deny': self.i.ACTION_TOOLS}}, out)  # the refusal only
         self.assertNotIn('autorisé', out)
         self.i.CLAUDE_SETTINGS.parent.mkdir(parents=True, exist_ok=True)
         self.i.CLAUDE_SETTINGS.write_text(json.dumps({'permissions': {'allow': ['Bash(ls *)']}}), encoding='utf-8')
         self.run_quiet(lambda: self.i.main(['repair']))
-        self.assertEqual(self.settings(), {'permissions': {'allow': ['Bash(ls *)']}})
-        self.assertEqual(list(self.i.CLAUDE_SETTINGS.parent.glob('settings.json.avant-mon-studio-*')), [])
+        self.assertEqual(self.settings(), {'permissions': {'deny': self.i.ACTION_TOOLS, 'allow': ['Bash(ls *)']}})
         self.assertNotIn('allow_scripts', self.i.status()['todo'], 'no morning task yet: nothing asked')
         self.i.MORNING_TASK.parent.mkdir(parents=True, exist_ok=True)
         self.i.MORNING_TASK.write_text('x', encoding='utf-8')
@@ -160,7 +160,7 @@ class Rules(Base):
         self.i.CLAUDE_SETTINGS.write_text(json.dumps({'permissions': {'allow': []}}), encoding='utf-8')
         out = self.run_quiet(lambda: self.i.main(['apply']))
         self.run_quiet(self.i.apply)
-        self.assertEqual(self.settings(), {'permissions': {'allow': []}}, out)
+        self.assertEqual(self.settings(), {'permissions': {'allow': [], 'deny': self.i.ACTION_TOOLS}}, out)
         sync = (SCRIPTS / 'sync.py').read_text(encoding='utf-8')
         self.assertIn("str(INSTALL), 'apply']", sync, 'the hook runs a bare apply')
 
@@ -177,7 +177,7 @@ class Rules(Base):
         self.i.CLAUDE_SETTINGS.write_text(json.dumps({'permissions': {'allow': ['Bash(ls *)']}}), encoding='utf-8')
         self.run_quiet(self.apply_with_go)
         out = self.run_quiet(self.i.disable)
-        self.assertEqual(self.settings(), {'permissions': {'allow': ['Bash(ls *)']}})
+        self.assertEqual(self.settings(), {'permissions': {'allow': ['Bash(ls *)'], 'deny': []}})
         self.assertIn('retiré     les autorisations des tâches du point du matin', out)
 
     def test_status_asks_for_the_rules_when_removed_after_install(self):

@@ -1,5 +1,197 @@
 # Changelog
 
+## 0.3.26 · 2026-11-26 · réglage du modèle et contrôle du barème pour tous les PM
+
+Le barème modèle et effort passe d'un texte à deux hooks, pour tous les PM. Effet pour le PM : chaque session démarre au réglage qui convient à sa demande, et un sous-agent ou une session lancée ne part plus en Opus ou en Fable sans raison.
+
+- Réglage d'ouverture (`hooks/reglage_ouverture.py`) : au premier message d'une session, la consigne de régler soi-même son modèle et son effort selon le barème (`set_session_model`, `set_session_effort`) et de l'annoncer en une ligne. Pour Fable et Opus high, la session propose et attend le oui du PM. La règle 6 de `regles/modele-effort.md` le dit ; le plafond des règles passe de 10 000 à 10 500 octets pour elle (10 369).
+- Contrôle du barème (`hooks/bareme_modele.py`) : un sous-agent en Opus ou Fable est refusé sans « [modèle justifié] <raison> » dans son prompt ; une session lancée est refusée sans modèle, ou en Fable sans « [fable demandé] ». Un fork, une offre et un `proposal_id` passent. Une session sans modèle que le contrôle du modèle au lancement refuse déjà ne reçoit qu'un refus.
+- Allumés par défaut ; `install.py switch reglage-ouverture off` et `switch controle-bareme off` les coupent (`reglage_ouverture`, `controle_bareme` dans cockpit.json), et le plan d'installation les annonce.
+- Un PM qui a déjà sa propre copie de l'un de ces hooks dans `~/.claude/hooks/` (ou sous `$CLAUDE_CONFIG_DIR`) ne la reçoit pas deux fois : celui du plugin se tait tant que la copie est là, et la copie peut être retirée.
+- Limites connues : le coût de la consigne d'ouverture (environ 250 tokens par session, relus ensuite) n'est pas mesuré ; aucun des deux hooks n'a encore été vu en session réelle sous le plugin, seulement dans leur version personnelle.
+
+## 0.3.26 · 2026-11-26 · Mon Studio : le moteur ne devine plus ce que personne ne lui demande
+
+Retrait de chemins de détection du texte libre, mesurés inutiles sur 4 806 fins de tour réelles des six dernières semaines. Effet pour le PM : les lignes affichées sur les sept derniers jours sont les mêmes, sauf deux lignes « Vérifier » qui citaient un geste à l'impératif (« Range cette session-ci. » devient « Ne dit pas si elle attend quelque chose de toi » ; une ancienne ligne disparaît). Une session dit ce qu'elle attend par ses questions numérotées ou par « Rien à faire de ton côté ».
+
+- Plus de lecture des gestes dans le texte libre (impératif, « tu peux », « à coller », case à cocher, bloc à coller), des éléments d'une section « pour toi » ni des propositions de Claude : le tri ne garde que les feux verts, les décisions demandées et les questions.
+- Plus de chemins qui ne se déclenchaient jamais : question « soldée » ou « sans objet », phrase qui parle d'une demande, demande annoncée pour plus tard, « tu peux » facultatif, « jamais à toi », partie « À trancher » qui se dit vide. Plus de lecture générale de « Rien n'est attendu de toi » : seule la formule du PM (« Rien à faire de ton côté ») et celles de son glossaire comptent.
+- Plus de ligne de repli pour un rappel sans numéro (« Encore ouvert : l'étape 3, dans l'encadré »). La boîte restée ouverte reste lue pour le rangement, qui ne range pas une telle session.
+- Retrait du code mort de la page : blocs couleur, grises, studios et silencieux du calcul de l'écran, listes `lignes` et `reste` des sessions.
+- Gardés : le tri central, les questions numérotées, le glossaire, le type des lignes, et l'intitulé en gras « À faire de ton côté » lu comme un titre.
+## 0.3.26 · 2026-11-26 · les règles de travail du PM ne valent que dans un Studio
+
+Les règles du PM et leurs contrôles ne s'appliquent plus à toutes les sessions du poste, seulement à celles ouvertes dans un Studio. Effet pour le PM : une session de développement, ou d'un autre plugin, ne reçoit plus le format « À trancher », la ligne de rappel, le rappel de session lourde ni la proposition de rangement, et ses sous-agents ne sont plus refusés faute de modèle. (Point d'audit soulevé par un développeur ; accord du PM.)
+
+- Une session « de Studio » est une session dont le dossier est, ou est sous, un Studio de `projets.json`, un dossier avec `.claude/.studio-manifest.json`, ou `~/Mon Studio` ; la copie de travail de l'app compte comme son dépôt. Un petit fichier commun, `hooks/perimetre.py`, le décide, sans modèle (environ 45 ms), et sert aux règles au démarrage, à la ligne de rappel (gardée dans `hooks.json`), au rappel de session lourde, à la proposition de rangement et au refus de lancement sans modèle.
+- Reste partout, car c'est de la mécanique : mise à jour du code copié, relais des autorisations, instantané des projets, brouillons, calcul de la liste à ranger, réponses en direct, lignes retirées.
+- `regles_dossiers` (liste de dossiers en plus, vide par défaut) et `regles_partout: true` (revient à l'ancien comportement) dans `cockpit.json`. Au moindre doute, fichier illisible ou dossier inconnu, les règles restent posées.
+- Mesuré sur 521 sessions des 30 derniers jours : 331 gardent les règles, 190 les perdent, dont 136 dans le dépôt du plugin cockpit lui-même ; à décider s'ils vont dans `regles_dossiers`. Rien n'y est ajouté ici.
+- Reste à brancher après fusion : le contrôle de format des questions de fin de tour (`format_questions.py`).
+## 0.3.26 · 2026-11-26 · fin de tour : la réponse finit toujours par « À trancher » ou « Rien à faire de ton côté »
+
+Une réponse qui ne finit par aucun des deux est renvoyée une fois à sa session, qui ajoute l'un ou l'autre. Effet pour le PM : Mon Studio n'a plus à deviner ce qu'une session attend de lui. Mesure sur les fins de tour des 14 derniers jours : 3,5 % renvoyées (40 sur 1 132), dont 14 sur un échantillon de 20 sont de vrais oublis. (PM, 2026-11-26.)
+
+- Le contrôle de format (`format_questions.py`) lit aussi les messages sans question : ni bloc « À trancher » / « To decide », ni question numérotée, ni « Encore ouvert », ni « Rien à faire de ton côté » / « Nothing to do on your side. » dans le dernier paragraphe (casse, ponctuation et point final tolérés).
+- Jamais de boucle (rien après un renvoi, `stop_hook_active`), rien sur un message de moins de 200 caractères (point d'étape pendant qu'une session attend ses agents), ni sur un tour sans texte, une tâche planifiée ou une session lancée par une autre (sauf remontée au premier niveau). Chaque renvoi s'ajoute au journal, sans le texte, avec `sans_fin`.
+- Interrupteur propre : `controle_fin_de_tour: false` dans cockpit.json (`install.py switch controle-fin-de-tour off`), allumé par défaut ; couper `controle_format` coupe les deux.
+## 0.3.26 · 2026-11-26 · Mon Studio : les sessions ne peuvent plus répondre à ta place
+
+Ce qui change : l'installation de Mon Studio refuse aux sessions les trois gestes de ta page, répondre à une question (`repondre`), autoriser ou refuser une demande d'outil (`decider`) et fermer une ligne (`clore`).
+Pourquoi : un audit a relevé que rien n'empêchait une session de les appeler : elle pouvait répondre ou accorder une autorisation à la place du PM. Le garde-fou du connecteur ne s'appliquait pas aux sessions de l'app. (PM, accord du 2026-11-26.)
+Effet pour le PM : sa page marche comme avant ; aucune session ne répond, n'autorise ni ne ferme plus rien à sa place.
+
+- `install.py apply` (et `repair`) ajoute à `~/.claude/settings.json`, dans `permissions.deny`, les règles `mcp__mon-studio__repondre`, `mcp__mon-studio__decider` et `mcp__mon-studio__clore`, après une copie datée du fichier ; rien n'est écrasé, aucune règle n'est ajoutée en double. Cela fait partie de l'installation de base, sans interrupteur : c'est une protection, et elle n'autorise rien. Un fichier illisible n'est jamais écrit : l'installateur le dit.
+- `plan` l'annonce avant le go ; `status` rend `actionsRefusees` (`present`, `missing`, `unreadable`) et `refusPoses`, et le `todo` `refuse_actions` quand il en manque.
+- `disable` retire seulement les règles que l'installateur a posées lui-même (gardées dans `cockpit.json`, `refus_poses`) : une règle que le PM avait déjà reste.
+- Les descriptions des trois outils du connecteur et son en-tête disent que les sessions en sont empêchées par cette règle. Le code du connecteur ne change pas.
+- Jusqu'ici, seul `apply --autorisations` touchait aux réglages ; désormais `apply` et `repair` y ajoutent aussi ce refus, et seulement lui.
+## 0.3.25 · 2026-11-26 · Mon Studio : un outil long n'est plus une autorisation
+
+Ce qui change : une session qui fait tourner un outil long (une suite de tests de 10 minutes, un sous-agent) ne monte plus au tableau comme « Session arrêtée sur une autorisation : à rouvrir ». Le tableau ne parle d'autorisation que si une demande a vraiment été faite : chaque demande d'autorisation laisse une trace (l'heure et le nom de l'outil, rien de ce qu'il ferait) dans `~/Mon Studio/.parc/demandes-autorisation/`, que l'allumage des autorisations depuis la page soit actif ou non. Sans trace, la session travaille ; silencieuse plus de 30 minutes, elle est « arrêtée en plein travail », sans autorisation.
+Pourquoi : le PM, 2026-11-26 : deux sessions en pleine suite de tests affichées comme arrêtées sur une autorisation. Au-delà de 3 minutes sans écrire, un outil sans résultat passait pour une autorisation en attente.
+
+## 0.3.25 · 2026-11-26 · un seul tri, partout
+
+« D'abord » ne se remplit plus de vieilles demandes de l'ingestion, et le même ordre vaut sur Mon Studio, dans la vue projet et dans le point du matin. Effet pour le PM : ce qui est tout en haut est ce qui presse, et la vue projet casse son gros bloc en bandes. (PM, Q5 à Q8, 2026-11-25/26)
+
+- **« Prénom attend » dure 7 jours (Q5).** Une demande de l'ingestion qui commence par « Prénom attend/demande » est « fort » pendant 7 jours après son apparition ; ensuite elle passe dans « Ensuite », à son rang de récence, avec la mention « Prénom attend depuis N j ». Une demande retardée ou marquée urgente reste en haut, quel que soit son âge. Une session qui attend (« une session attend ») ne rend « fort » que pendant 24 h, comme son rang le faisait déjà.
+- **Ordre de « D'abord » (Q6).** Les passages planifiés arrêtés d'abord ; puis les lignes en retard, l'échéance la plus ancienne d'abord ; puis les échéances, la plus proche d'abord ; puis les autres lignes fortes (blocages, « Prénom attend », mots clés), la plus récente d'abord. Une échéance sans origine connue compte, et la ligne dit « échéance JJ/MM · origine inconnue » (le kit d'ingestion n'écrit pas encore ce champ : mesuré le 2026-11-25, aucune des 6 échéances n'en avait).
+- **Vue projet (Q7).** Mêmes titres de bande que le tableau (« D'abord · n », « Ensuite · n »), « Peut attendre » replié ; une bande vide n'a pas de titre, et « Ensuite » n'en a un que sous un « D'abord ».
+- **Point du matin (Q8).** Les listes par projet suivent le tableau : échéance proche, puis la plus récente d'abord. Les projets sont classés par urgence, puis par récence de leur ligne la plus récente, plus par ordre alphabétique.
+- **À savoir.** Une demande « Prénom attend » de plus de 7 jours ne va plus dans « Anciennes » tant qu'elle a moins de 21 jours : sans cela elle y serait tombée au même moment (« Anciennes » commence aussi à 7 jours), et la règle n'aurait rien changé. Au-delà de 21 jours, elle est ancienne comme les autres. Essayé sur les vraies données du 2026-11-26 : le tableau passe de 6 à 6 lignes en « D'abord » (aucune demande « Prénom attend » n'a encore 7 jours), l'ordre change, et « Dire à Léo … mode clair » descend sous les arrêts de session.
+- Limites connues : l'âge « depuis N j » est celui du dernier calcul du Mac, il ne bouge pas page ouverte ; la limite de 7 jours n'a pu être essayée sur de vraies données que par un calcul rejoué (aucune demande réelle n'a encore passé 7 jours).
+
+## 0.3.24 · 2026-11-26 · Mon Studio : boutons de réponse sous la question
+
+Les boutons de réponse passent sous la question, côte à côte ; « Agir » garde « Ouvrir ↗ » et des icônes sur une ligne (nom au survol). Effet pour le PM : le tableau est 44 % moins haut (mesure sur 76 vraies lignes : 13 003 → 7 280 px). (PM, Q2, 2026-11-26)
+
+## 0.3.24 · 2026-11-26 · Mon Studio : titre de question sans « : »
+
+Une question écrite « Qn · Titre ? question » sans « : » garde un titre court sur sa ligne de Mon Studio, et la session est renvoyée pour la réécrire au format. Effet pour le PM : plus de ligne dont le titre court jusqu'à 278 caractères parce que la question collée au titre en faisait partie. (PM, 2026-11-26)
+
+- Mon Studio coupe le titre au premier « ? » (gardé) quand il n'y a pas de « : » ; avec un « : », rien ne change. Le contrôle de fin de tour renvoie la session (`sans_deux_points`) : « Qn · <titre> : <question> ». Une ligne « Qn · Titre ? : question », ou un titre seul suivi de ses options, passe.
+- Mesure sur les sessions du 20 au 25/11 (612 questions lues, 474 distinctes) : 11 questions distinctes sans « : » (13 fois dans les messages) ; leur titre faisait 60 caractères au plus pour 1 sur 11 avant, 10 sur 11 après (le plus long passe de 278 à 51 caractères). Fausses alertes sur les questions bien écrites : 0 sur 463. Les titres en gras fermé (« **Qn · Titre ?** question ») ne sont pas touchés : le gras fermant sépare déjà.
+
+## 0.3.24 · 2026-11-26 · Mon Studio : une ligne « Relire » porte son document
+
+Une ligne de relecture montre « Ouvrir le document ↗ » à côté de « C'est bon » et « Corrections ». Effet pour le PM : il lit le compte rendu, le mail ou l'artifact, puis répond sans ouvrir la session. (PM, Q1 du 2026-11-17, confirmée le 2026-11-25 ; point 1 de « À faire ensuite » de la 0.2.30.)
+
+- Le lien est lu dans la question, sans modèle : « Pièce : <lien> », sinon le premier lien vers un document (artifact Claude, Google Docs ou Drive, Notion, wiki). Un lien d'autre nature n'est pas proposé. Un fichier du Studio se lit dans la page, comme avant. Mesure sur le tableau du 2026-11-25 : 0 ligne « Relire » sur 8 portait sa pièce avant, 1 sur 8 après (les sessions n'écrivaient pas le lien).
+- La règle 2 demande « Pièce : <lien du document> » sur toute relecture ; le contrôle de fin de tour renvoie la session qui relit sans lien ni fichier (`relecture_sans_piece`).
+
+## 0.3.23 · 2026-11-26 · Mon Studio : projets masqués
+
+Ce qui change : une liste de projets que Mon Studio ne lit plus (`projets_masques` dans `~/Mon Studio/.parc/cockpit.json`, une liste de dossiers) : ni tableau, ni vue projet, ni liste des projets, ni brief du matin.
+Pourquoi : un PM ne suit plus certains projets et ne veut plus les voir sur Mon Studio (avant une démo), sans archiver leurs sessions.
+Effet : leurs sessions restent dans la barre latérale de l'app, rien n'est archivé ni modifié ; un dossier masque ses sous-dossiers et les copies de travail de son dépôt, jamais un dossier homonyme (« SEO » ne masque pas « SEO EF »).
+
+## 0.3.22 · 2026-11-25 · rangement : sans demander, toutes les sessions vérifiées
+
+L'essai du rangement sans demander a réussi : en mode auto, l'app a archivé la session visée, sans demande au PM, après une revérification. Effet pour le PM : avec `rangement_sans_demander` allumé, chaque jour toutes les sessions finies vérifiées sont rangées d'un coup, et une ligne « Rangé : … » le dit, au lieu d'une seule par jour. (PM, Q4, 2026-11-25)
+
+- Restent exclues : les sessions qu'il a gardées quand on les lui a proposées (7 jours), celles qu'il a ouvertes lui-même, celles qui attendent une réponse, et les sessions de backlog dont l'epic n'est pas poussée dans Jira.
+
+## 0.3.21 · 2026-11-25 · rangement : une session de backlog n'est jamais rangée avant le push Jira
+
+Le rangement garde aussi une session d'écriture de backlog en pause pour relecture. Effet pour le PM : les fiches epic et les tickets écrits seulement dans le Studio ne sont ni proposés au rangement ni archivés, même par l'accord permanent, tant que leur epic n'est pas poussée dans Jira. (PM, 2026-11-25 : « elles, il ne faut pas y toucher »)
+
+- Une session qui cite le dossier `fiche-epic` d'une epic est gardée comme celle qui cite son dossier `pret-a-dev`, tant que `pret-a-dev/05-jira/cles-jira.json` n'existe pas. Une session qui lit une epic déjà poussée comme modèle en écrivant une autre reste donc gardée.
+- Une session qui a utilisé le plugin backlog (une commande `/backlog:…`, une compétence ou un agent `backlog:`) sans citer aucun dossier d'epic est gardée, avec la raison « écriture de backlog (plugin backlog) : rien de poussé dans Jira n'est connu ». Limite : elle reste gardée jusqu'à ce que le PM la range à la main.
+- Une session proposée au PM et qu'il a gardée n'est jamais archivée sans lui demander pendant 7 jours, même avec `rangement_sans_demander` (PM, 2026-11-25 : « les autres garde-les pour l'instant »). La revérification ne porte que sur les sessions nommées par la proposition (`confirmer --ids`), et la session n'archive que celles que le PM accepte.
+
+## 0.3.20 · 2026-11-25 · Mon Studio : les questions relayées restent dans leur session
+
+Une session qui rappelle les questions d'une autre (« [autre session](lien) attend toujours tes réponses à ses questions Q40 à Q43 ») ne fait plus de lignes à son nom. Effet pour le PM : plus de lignes « Q40 · Une question t'attend dans cette session » avec « Question introuvable », dont le bouton « Ouvrir » menait à la mauvaise session ; ces questions restent sous la session qui les a posées. (PM, 2026-11-25, capture de Mon Studio.)
+
+- Une phrase qui porte le lien d'une session n'est plus lue comme un rappel des questions de la session qui l'écrit. La même phrase sans lien (« J'attends toujours tes réponses à Q40 et Q43 ») reste lue comme avant.
+
+## 0.3.19 · 2026-11-25 · rangement : la proposition revient dans ta session, une fois par jour
+
+Une fois par jour, une de tes sessions te propose de ranger les sessions finies, à la fin de sa réponse. Effet pour le PM : il n'a plus à penser au bouton « Ranger » de Mon Studio ; il répond « 1 » et la session archive, ou « 2 » et rien ne bouge. (PM, Q7, 2026-11-25 : proposer d'abord, puis tester l'autonomie.)
+
+- Au premier message du PM de la journée dans une session de premier niveau de l'app de bureau, le hook demande à la session de finir sa réponse par la question « Qn · Ranger N sessions finies ? », dont il donne le texte : les sessions ont été lancées par Claude ou par d'autres sessions, ne font plus rien depuis X jours, ce qu'elles ont produit est enregistré au Studio, aucune n'attend de réponse ; une ligne par session, son titre lié et sa raison en clair ; « 1) Les ranger (recommandé) », « 2) Les garder ». Le hook n'ordonne aucun archivage : c'est la réponse du PM qui vaut accord, comme le 2026-11-23 quand l'app a accepté l'archivage demandé par le PM dans sa session.
+- Rien n'est proposé dans une session lancée par une autre, sur un message venu d'une autre session ou de l'app, dans une tâche programmée, hors de l'app de bureau, ni avec une liste calculée il y a plus de 24 h. Une session redevenue active ou déjà archivée sort de la liste ; la session où l'on travaille n'y est jamais.
+- Sur le « 1 », la session lance `rangement.py confirmer` : il revérifie la liste (une session redevenue active en sort ; un worktree avec des fichiers non enregistrés ou des lignes jamais entrées dans main la garde, par `archive_check.py`, remis dans le plugin) et note les sessions confirmées dans `.parc/ranger.json`, comme le bouton, pour que « Rangées aujourd'hui » suive. Puis elle archive celles-là seulement.
+- Interrupteurs : `rangement_propose` (allumé par défaut, `install.py switch rangement-propose on|off`) ; `rangement_auto: false` coupe aussi la proposition. `rangement_sans_demander` (coupé par défaut, `switch rangement-sans-demander on|off`) est l’essai d’un accord permanent : la session archive sans poser la question une session vérifiée par jour pendant l’essai, puis le dit en une ligne. `rangement.py proposer --apercu` montre la proposition du jour sans rien noter.
+
+## 0.3.18 · 2026-11-24 · rangement : une session de tickets attend le push Jira
+
+Le rangement garde une session de tickets prêts à dév tant que les tickets de son epic ne sont pas poussés dans Jira. Effet pour le PM : les micro-sessions d'une epic (une par ticket) restent toutes dans la liste jusqu'au push, au lieu d'être proposées au rangement dès qu'elles sont finies. (PM, 2026-11-24 : « je garde toutes ces micro-sessions par EPIC tant qu'elles ne sont pas poussées sur JIRA »)
+
+- Une session est gardée, avec la raison « tickets de l'epic <dossier de l'epic> pas encore poussés dans Jira », quand ses appels d'outils citent un chemin `…/pret-a-dev/…` d'une epic du plugin backlog dont le fichier `pret-a-dev/05-jira/cles-jira.json` (écrit par le push) n'existe pas encore. Les chemins avec espaces et parenthèses (Drive partagé) et les chemins relatifs au dossier de la session sont lus.
+- Un dossier d'epic qui n'existe plus ne garde rien ; un transcript illisible garde la session (au moindre doute, on garde). La lecture se fait sans modèle, seulement pour une session qui passe déjà toutes les autres conditions.
+- Limite connue : la règle lit les chemins cités dans les appels d'outils ; une session qui a travaillé sur une epic sans jamais citer son dossier `pret-a-dev` n'est pas reconnue.
+
+## 0.3.17 · 2026-11-24 · onglet Conflits : une seule liste « À trancher », passe complète tous les 30 jours
+
+Mon Studio suggère une passe complète des conflits tous les 30 jours. Effet pour le PM : il est relancé quand l'ingestion, qui n'inscrit pas tout, a pu laisser passer des conflits.
+
+- L'onglet « Conflits » liste chaque conflit une seule fois, sous « À trancher » : celui qu'une session pose en ce moment porte la mention « posé maintenant » et son bouton « Répondre dans … ». Les questions de la session qui ne portent sur aucun cas restent à part (« Questions de la session ») ; une question numérotée du message de la session (« Q29 · … ») s'y montre mais n'est pas comptée. Le rapprochement se fait sans LLM : le sujet du cas dans la question, ou au moins 4 mots significatifs communs avec son sujet et ses valeurs.
+- Chaque passage de l'ingestion inscrit les nouveaux conflits au registre `projet/conflits.md` au fur et à mesure qu'il les trouve, sans les trouver tous. Mon Studio suggère donc une passe complète, comme à l'onboarding : une ligne « Refaire une passe complète des conflits » dans « Ce qui t'attend », et dans l'en-tête de l'onglet « Conflits » « Dernier passage complet il y a N jours : une nouvelle passe rattrape ce que l'ingestion n'a pas vu » avec le bouton « Refaire une passe complète ↗ » (`/cockpit:conflits rattrapage` copié). La suggestion vient 30 jours après « Dernier passage » ; la période se règle par Studio (`repasse_jours`, de 1 à 365, dans `projet/.conflits/reglages.json`). « Fait » la ferme jusqu'à la période suivante ; une nouvelle passe la remet à zéro. Un Studio jamais vérifié garde sa ligne « Vérifier les conflits du Studio, une fois ».
+
+## 0.3.16 · 2026-11-24 · coût du premier relevé des conflits
+
+Ce qui change : le jugement des lots du premier relevé des conflits est lancé par le script, un appel Sonnet sans outil par lot, au lieu de sous-agents de la session.
+Pourquoi : chaque sous-agent portait environ 78 000 tokens de socle pour 16 000 tokens d'extraits, et la session Opus payait trois appels par lot, son contexte grossissant à chaque lot ; un PM a vu son estimation peser une grosse part de sa semaine.
+Effet sur le coût : 64 sujets jugés pour 0,51 $ mesurés (1,76 $ annoncés avant) ; estimations 4,76 $ → 1,97 $ pour 64 sujets, 27,9 $ → 6,9 $ pour 307, 39,9 $ → 9,0 $ pour 393 ; 158 $ → 57 $ sur les 33 Studios clients, soit 2,5 à 4,5 fois moins pour un Studio de 60 sujets ou plus, 1,4 fois pour un petit Studio (la session reste).
+
+- `conflits.py juger-lots <plan>` juge chaque lot par `claude -p` (Sonnet, effort medium, sans outil, sans règles ni CLAUDE.md, sans serveur MCP, sans cache), trois à la fois, avec la même consigne que la passe du lundi et les mêmes contrôles qu'un jugement de sous-agent ; un sujet refusé (un code dans son titre) ou manquant est redemandé une fois, seul. Il enchaîne `juger` et rend l'aperçu, précédé du coût réel ; chaque appel est noté dans `<plan>.couts.json`. La session le lance en arrière-plan : un appel au lieu de trois par lot.
+- Rien ne change dans ce que le jugement décide ni dans ce qui est écrit : mêmes classes, mêmes règles de titre et de contexte, même registre, mêmes documents. Sur deux lots jugés des deux façons, 14 classements sur 16 identiques ; les deux autres posent la question au PM au lieu de « rien ».
+- Repli : sans `claude` en ligne de commande, ou pour un lot qu'il n'a pas pu juger, il le dit (code 3) et la session reprend les sous-agents d'avant, pour ces lots seulement. L'estimation suit le mode qui jugera ; Mon Studio recalcule ses estimations gardées (barème 3).
+- La taille des lots ne change pas (10 sujets, 45 Ko) : sans socle de 78 000 tokens, des lots plus gros n'économiseraient que la consigne (3 000 tokens par lot) et rendraient chaque jugement plus long.
+
+
+La vue d'un projet et les réponses en direct ne font plus attendre la page. Effet pour le PM : un projet s'ouvre aussitôt sur sa dernière vue, mise à jour une ou deux secondes plus tard ; une question qui attend sa réponse, ou une demande d'autorisation, apparaît sans délai même pendant que le tableau se recalcule.
+
+- Pourquoi : le 24/11 à 08:36, « attentes » a mis 11,89 s. Mesuré sur une copie des données réelles : pour nommer la session qui attend, le connecteur relisait les 1 046 fiches de l'app (734 Mo) au premier appel après un démarrage, 16 s ; ensuite, chaque appel faisait encore un accès disque par fiche, et chacun attendait le calcul du tableau en cours (0,03 s seul, 0,8 à 1,2 s pendant le calcul). « projet » (0,6 à 1,6 s) attendait en plus la fin du calcul du tableau (1,7 s de plus mesurés).
+- « projet » est servi comme le tableau : la dernière vue du dossier tout de suite, recalculée en fond, un calcul à la fois par dossier ; un clic qui écrit la rend périmée et la vue suivante est recalculée avant de répondre. La page la relit toutes les 1,5 s jusqu'à la vue fraîche, sans redessiner une vue identique.
+- « attentes » et « autorisations » restent en temps réel : elles lisent les sessions dans une table tenue à jour par chaque calcul du tableau, et ne relisent les fiches que pour une session encore inconnue (une nouvelle session est nommée dès sa première demande).
+- Le journal du connecteur note la durée de chaque calcul en fond (« lignes en fond · 3.10 s », « projet en fond · Studio - X · 1.20 s »).
+
+## 0.3.15 · 2026-11-24
+
+L'onglet « Conflits » dit « les nouveautés sont jugées » quand un passage complet a eu lieu le jour même où le point du matin avait trouvé la relecture trop grosse (rattrapage de deux Studios réels le 24/11), au lieu de « Relecture pas faite ».
+
+## 0.3.14 · 2026-11-23
+
+Les conflits apportés par les ingestions arrivent chaque matin dans l'onglet « Conflits ». Effet pour le PM : plus aucune passe à lancer à la main ; un nouveau conflit d'une réunion, d'un mail ou d'une décision apparaît le lendemain matin, ou l'onglet dit « à jour » si rien n'est nouveau.
+
+- Pourquoi rien n'arrivait depuis le 10/11 : la relecture « incrémentale » se fiait à la date de modification des fichiers, que le Drive réécrit par dossiers entiers (sur un Studio réel, 1 037 documents sur 1 175 « modifiés » depuis le dernier passage). Elle relisait donc tout : 480 sujets, 3,2 % de la semaine. La détection après ingestion, trop grosse, était sautée à chaque passage, et la passe du lundi sautait les Studios en ingestion.
+- La relecture ne lit plus que les lignes que le dernier passage complet n'a pas lues (`projet/.conflits/lignes-lues.json`, gardé avec « Dernier passage ») ; sans ce fichier, les dates écrites dans le Studio. Un même passage copié dans plusieurs fichiers n'est lu qu'une fois ; une ligne de réunion rejoint une décision sur quatre mots de fond, sans les noms des personnes ni les lignes d'en-tête.
+- La passe du point du matin tourne chaque jour, sur chaque Studio dont tu es PM, ingestion active ou non, réunions et mails compris. Elle inscrit au registre sans poser de question ; « Dernier passage » avance quand tout est jugé, ou quand rien n'est nouveau. Plafond : 200 000 caractères par matin ; mesuré sur deux Studios réels un lundi chargé, 47 sujets jugés pour 0,54 $ (0,04 % de la semaine).
+- `conflits.py cacher <studio> C4 C8 … --raison … --pm …` retire des cas du journal de l'onglet (doublon marqué, bandeau posé, question close) ; ils restent au registre, qui n'est pas modifié.
+
+## 0.3.13 · 2026-11-23
+
+Mon Studio s'ouvre aussitôt et se recalcule en moins d'une seconde. Effet pour le PM : la page n'affiche plus « Mon Studio se charge… » pendant 4 à 8 s ; elle montre tout de suite le dernier tableau, puis le tableau frais quelques secondes après.
+
+- Le connecteur rend aussitôt le dernier tableau qu'il a calculé, gardé en mémoire et dans `~/Mon Studio/.parc/lignes-derniere.json` (une app relancée l'a donc aussi), marqué `frais: false`, et le recalcule en fond, un calcul à la fois. La page le relit alors toutes les 1,5 s jusqu'au tableau frais ; elle ne redessine rien si rien n'a changé.
+- Un clic qui change le tableau (Fait, Plus tard, Reçu, Annuler, une réponse, une autorisation…) n'est jamais caché par le tableau gardé : la lecture suivante recalcule avant de répondre, comme avant. Un calcul en fond qui échoue fait de même, pour que l'erreur s'affiche.
+- Le calcul garde ce qui ne change pas d'une lecture à l'autre : le tri de chaque message (par son texte et le glossaire du PM), les tables de pastilles de l'app (par fichier, date et taille), le journal de chaque chantier, le nom git du PM, les modules voisins (matin.py, le registre des conflits), et, deux minutes, la recherche d'un Studio rangé dans le dossier d'un autre. Rien de ce qui dépend de l'heure n'est gardé.
+- Mesuré sur une copie des données réelles du 2026-11-23, médianes de 5 lectures sur plusieurs séries : 5 à 6 s avant, 0,7 à 1,2 s après dans un connecteur déjà lancé (0,7 s quand une session vient de bouger) ; premier calcul d'un connecteur neuf 6,4 à 9 s avant, 2,4 à 3,3 s après ; première réponse à la page 0,01 s, tableau frais 3 à 4,5 s après une relance de l'app. Le tableau calculé est identique, octet pour octet, à celui de la 0.3.11 sur ces données (heure figée).
+- Limites connues : pendant les quelques secondes du recalcul, la page peut montrer une ligne déjà partie (une session répondue ailleurs) ; un Studio créé dans le dossier d'un autre est vu jusqu'à deux minutes plus tard ; une session qui appelle l'outil `lignes` reçoit elle aussi le dernier tableau d'abord. Pas encore essayé dans la vraie page de l'app, seulement dans la page jouée par les tests.
+
+## 0.3.12 · 2026-11-19
+
+« Slack ↗ » ouvre le message directement dans l'app Slack de bureau, sans navigateur ni réglage (Q14). Effet pour le PM : un clic sur « Slack ↗ » (tableau, vue projet, dépli d'une ligne) amène sur le bon message dans l'app, au lieu de la page web de Slack.
+
+- « Pour info » ne montre que des nouvelles fraîches : des faits de la veille ouvrée ou du jour, et rien de ce que tu as déjà vu un jour précédent. La date du fait se lit dans le texte de l'entrée (« Slack #canal (Alex, 19/11 18:05) », « Daily du 19/11 »), plus l'heure du passage de l'ingestion ; le connecteur note chaque visite de la page (~/Mon Studio/.parc/visites.json, 14 jours). Les visites du jour ne masquent rien, et après quelques jours d'absence tu ne vois jamais plus que la veille ouvrée et aujourd'hui.
+- La page appelle l'outil « ouvrir » du connecteur avec l'adresse web du message ; le connecteur lit l'identifiant de l'espace dans le fichier d'état de l'app Slack (lecture seule) et confie à macOS un lien `slack://channel`. La page elle-même ne navigue jamais. Une réponse dans un fil garde son fil.
+- Sans l'app Slack, sans l'espace dans son état, ou si macOS refuse le lien, l'adresse web s'ouvre dans le navigateur comme avant ; sans connecteur, le lien web reste un lien. Seule l'adresse d'un message Slack (`https://<espace>.slack.com/archives/…`) est acceptée.
+- Limite connue : le lien `slack://` n'a pas été ouvert dans l'app par les tests (ils simulent `open`) ; ce qui a été vérifié, c'est le lien construit.
+- Les trois en-têtes de bande du tableau (« D'abord », « Ensuite », « Peut attendre ») ont la même taille : les deux premiers étaient plus petits.
+- Un titre n'est plus coupé par « … » : une demande de l'ingestion a pour titre le début de sa phrase jusqu'à une coupure naturelle (virgule, deux-points, parenthèse refermée), une ligne de session est coupée au même endroit ou sur un mot entier. Une demande déjà notée avec un titre en « … » retrouve son titre depuis son texte. Le dépli ne répète plus le titre : il montre seulement ce que le titre ne dit pas, et rien quand il dit tout.
+- Chaque ligne de « D'abord » dit pourquoi elle y est, par une seule pastille : « échéance 20/11 », « en retard », « une session attend », « attend une autorisation », « arrêtée en plein travail », « sécurité », « Vincent attend »… La règle qui classait une échéance proche, une session qui attend ou une session arrêtée laissait la raison vide : elle donne désormais sa raison, et la page en déduit une quand elle n'en reçoit pas.
+- « Sans réponse » (Today) ne montre plus une attente dont la session source est archivée : « Ouvrir » menait à une session archivée. Sur le Studio mesuré, 3 attentes devenaient 2 (la tâche personnelle d'une session archivée, notée « bloquée », partait).
+- Le compteur de l'en-tête dit ce qu'il compte : « 10 à faire d'abord au tableau » (« dans ce projet » sur la page d'un projet), et la phrase de Today « 1 à traiter aujourd'hui », pour ne plus lire deux nombres différents comme un seul.
+- Dans l'agenda de Today, « 26 questions ouvertes » à côté d'une réunion est un bouton : un clic ouvre le tableau filtré sur ce projet (le même filtre que le bouton du projet en haut du tableau), donc exactement les lignes comptées. Aucun appel au connecteur.
+- Un fichier lu dans la page (« Lire ») n'affiche plus ses puces en gras sur une colonne étroite : une puce « **09:41, Ana** : texte » s'écrivait un caractère par ligne, parce que la règle de grille des lignes de la page s'appliquait aussi aux puces du fichier. Elles sont de simples lignes.
+- Onglet Conflits d'un projet, « En cours » : une ligne de tâche montre son sujet (« Q29 · Projet · Conflits Studio : Lancer la passe… ») et non plus sa consigne (« Nouvelle session sur le dossier Studio, coller le prompt… »), qui était la phrase de détail de la ligne.
+- Onglet Conflits d'un projet : une décision que le fichier des décisions du backlog note « pas tranchée » n'est plus rangée sous « Tranché » (le relevé prenait tout texte en gras pour un choix). Elle apparaît sous « Pas encore tranché », avec sa date, et n'entre plus dans le compte des tranchées.
+- Le PM d'une fiche projet est aussi lu dans un bloc de lignes « clé: valeur » (`pm: Camille Durand (PM effectif…)`), pas seulement dans la ligne de tableau « | PM | … | ». Avant, un Studio dont la fiche était écrite ainsi comptait le PM comme simple membre : il n'avait ni la ligne « Vérifier les conflits du Studio, une fois » ni les relances de conflits. Un Studio sans manifeste (`.claude/.studio-manifest.json`) n'a toujours pas cette ligne : la commande des conflits ne peut pas y tourner.
+- Sous le tableau, « Sessions finies à ranger » montre la demande d'archivage elle-même dans une boîte en lecture seule (un clic la sélectionne, Cmd+C la copie), avec ou sans le bouton « Ranger » : le presse-papiers de l'app peut refuser la copie. Si la copie par le connecteur échoue, la page ne dit plus « Copié » : elle dit de copier le texte à la main. Sur le Studio mesuré, le bloc n'apparaissait pas parce que la liste était vide : le rangement avait déjà archivé les dix sessions finies.
+
 ## 0.3.11 · 2026-11-19
 
 Trois retouches de Mon Studio vues à l'usage. Effet pour le PM : un texte d'envoi ne recouvre plus le titre d'une question, une ligne Mail dit d'où vient son échéance, et un clic sur un projet filtre le tableau au lieu de sauter à un groupe.
@@ -7,6 +199,7 @@ Trois retouches de Mon Studio vues à l'usage. Effet pour le PM : un texte d'env
 - Sur une ligne qui vient d'être répondue depuis le tableau, « Envoi de « Q8 … » à la session… » (et « copié : colle-le… ») a sa propre rangée sous les boutons, passe à la ligne dans sa colonne et ne s'étale plus sur le titre. Essayé dans Chrome, à deux largeurs, avant et après.
 - Une ligne Mail montre la date où le mail est arrivé (« reçu le 18/11 ») à côté de « avant le 23/11 ». Au dépli : « Reçu » et « Échéance », avec « lue dans le mail », « calculée : <règle> » ou « origine de l'échéance inconnue ». Le Mac lit ces dates sur la puce de l'ingestion : ` (reçu le AAAA-MM-JJ)` et ` (échéance AAAA-MM-JJ, lue dans le mail)` ou ` (échéance AAAA-MM-JJ, calculée : <règle>)`. Rien n'est inventé : sans date de réception, la ligne dit « noté le » (le jour du passage de l'ingestion), jamais « reçu le ».
 - Un clic sur un projet, en haut du tableau, ne garde que ses lignes, dans toutes les bandes (D'abord, Ensuite, Peut attendre, Anciennes), demandes de l'ingestion comprises. Le projet choisi est marqué, « Tout afficher » (ou un second clic) remet tout. Tout se passe dans la page, sans appel au Mac. « Vue projet » reste le chemin vers la page du projet.
+- Le tableau range toutes ses lignes de la même façon. Effet pour le PM : une ligne fraîche passe devant une vieille, quel que soit son dossier ou sa source. Les lignes d'un dossier qui n'est pas un Studio projet (dépôt de kit, dossier de travail) ne descendent plus en bas de « Ensuite » : elles gardent leur rang, urgence puis récence. Les demandes « À toi » de l'ingestion ne sont plus toutes en tête : elles rejoignent le bloc de leur Studio, sur le tableau comme dans la vue projet ; une demande forte (échéance, quelqu'un attend) monte toujours dans « D'abord ». Mesuré sur un vrai tableau : une ligne de 3 min passe de la 52e place de « Ensuite » à la 1re.
 - Limites connues : le kit d'ingestion n'écrit pas encore ces deux mentions (reçu, origine de l'échéance) : tant qu'il ne le fait pas, les lignes Mail disent « noté le » et « origine de l'échéance inconnue » ; la bande « En un clic » n'est pas filtrée par le projet ; le filtre n'est pas gardé quand la page se recharge ; le clic sur un projet n'a pas été essayé dans la vraie page, seulement dans la page jouée par les tests.
 
 ## 0.3.10 · 2026-11-18

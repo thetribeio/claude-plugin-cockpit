@@ -55,6 +55,13 @@ def api_error(minutes_ago):
             'message': {'id': 'err', 'model': '<synthetic>', 'content': [{'type': 'text', 'text': 'API Error: overloaded'}]}}
 
 
+def trace_request(cli):
+    """The PermissionRequest hook's trace (hooks/autorisation.py): without it, a pending tool only runs long."""
+    d = parc.INTERNE / 'demandes-autorisation'
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f'{cli}.json').write_text(json.dumps({'t': NOW, 'outil': ''}))
+
+
 LONG = 'python3 scripts/export.py --from 2026-10-01 --to 2026-10-28 \\\n  --format csv ' + '--column x ' * 40
 
 SESSIONS = {
@@ -97,6 +104,7 @@ class Fixture(unittest.TestCase):
             path = parc.TRANSCRIPTS / 'proj' / f'{cli}.jsonl'
             path.write_text(''.join(json.dumps(e, ensure_ascii=False) + '\n' for e in entries), encoding='utf-8')
             os.utime(path, (NOW - 900, NOW - 900))
+            trace_request(cli)
         cache = {'version': parc.VERSION_CACHE, 'fiches': {}, 'transcripts': {}, 'suivi': {}, 'controle': {}}
         self.e = parc.construire(7, 7, NOW, cache)
 

@@ -301,46 +301,16 @@ class Fallback(Transcripts):
 
 
 # The second real case (a session of a Studio with a foreman, 15/10), anonymised: the session asks its question in
-# the app's end-of-turn card, two messages from the foreman start two more turns, and each ends on a recall without a
-# number. The line read « Encore ouvert : l'étape 3, en attente de ta réponse dans l'encadré. », title and detail.
+# the app's end-of-turn card. Mon Studio no longer makes a line from a recall without a number (« Encore ouvert :
+# l'étape 3, en attente de ta réponse dans l'encadré. »): the card's own line stays.
 STEP3 = "Je lance l'étape 3 (la commande en forme de skill) ?"
 STEP3_ACTIONS = [('Oui, étape 3', "Lance l'étape 3 : la commande en forme de skill, en PR sur le dépôt."),
                  ('Pas maintenant', "Pas maintenant, je relis le plan d'abord.")]
 STEP3_DETAIL = (STEP3 + " Oui, étape 3 : Lance l'étape 3 : la commande en forme de skill, en PR sur le dépôt. "
                 "Pas maintenant : Pas maintenant, je relis le plan d'abord.")
-RECALL_BOX = ("Le contremaître a rangé la ligne sous son sujet. Rien ne change pour toi.\n\n"
-              "Encore ouvert : l'étape 3, en attente de ta réponse dans l'encadré.")
 
 
 class UnnumberedRecall(Transcripts):
-    def card_then(self, *after, tool=parc.FIN_DE_TOUR, result=None):
-        return ([final(5, 'Le plan est écrit.', 'a')] + box(3, 'c', STEP3, STEP3_ACTIONS, tool, result)
-                + list(after) + [peer(2.9, 'Noté au tableau.'), final(2.8, RECALL_BOX, 'r1'),
-                                 peer(2.7, "Pour l'étape 3, la branche passera par le fil rouge."), final(2.6, RECALL_BOX, 'r2')])
-
-    def test_the_real_case_gives_the_last_box_never_the_recall(self):
-        s = self.session(KIT, self.card_then(), STUDIO_CWD)
-        self.assertEqual(s['etat'], 'attend')  # the card answers at once; the foreman's messages start new turns
-        d, = parc.demandes(s)
-        self.assertEqual((d['titre'], d['suite'], d['detail']), (STEP3, 'Oui, étape 3 · Pas maintenant', STEP3_DETAIL))
-        self.assertEqual((d['type'], d['depuis']), ('go', parc.ts_iso(at(3))))
-        l, = self.table([s])[0]
-        self.assertEqual((l['affiche_titre'], l['detail'], l['verbe']), (STEP3, STEP3_DETAIL, 'Go'))
-        self.assertNotIn('Encore ouvert', json.dumps(l, ensure_ascii=False))
-
-    def test_a_dismissed_menu_is_still_open(self):
-        d, = self.recalled(self.card_then(tool='AskUserQuestion'))
-        self.assertEqual((d['titre'], d['suite']), (STEP3, 'Oui, étape 3 · Pas maintenant'))
-
-    def test_an_answered_menu_or_a_word_from_the_pm_closes_the_box(self):
-        answered = self.card_then(tool='AskUserQuestion', result='Your questions have been answered: "…"="Oui, étape 3".')
-        spoken = self.card_then(pm(2.95, "Attends, je relis d'abord le plan."))
-        for entries in (answered, spoken):
-            d, = self.recalled(entries)
-            self.assertEqual((d['titre'], d['suite']), ('', parc.QUESTION_SANS_TEXTE))
-            self.assertEqual(d['detail'], 'Question introuvable dans la session ; son dernier message disait : '
-                                          '« Le contremaître a rangé la ligne sous son sujet. Rien ne change pour toi. »')
-
     def test_a_numbered_recall_keeps_its_number(self):
         entries = box(3, 'c', 'Q5 · ' + STEP3, STEP3_ACTIONS, parc.FIN_DE_TOUR) + [final(2, 'Encore ouvert : Q5.', 'r')]
         s = self.session(ALONE, entries)

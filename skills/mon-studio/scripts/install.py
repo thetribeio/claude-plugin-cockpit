@@ -6,7 +6,9 @@
     python3 install.py plan                    # what `apply --connector` would do, in plain words (read only)
     python3 install.py apply [--connector] [--autorisations]
                                                # installs or updates; --connector also declares it in the app;
-                                               # --autorisations adds the morning tasks' rules to ~/.claude/settings.json
+                                               # --autorisations adds the morning tasks' rules to ~/.claude/settings.json;
+                                               # every apply also denies the sessions the connector's repondre, decider
+                                               # and clore in ~/.claude/settings.json (`disable` removes what it added)
     python3 install.py repair                  # copies the screen's code again, even when it is up to date
     python3 install.py page <address>          # records the published page, so it is never published twice
     python3 install.py pinned                  # the noted page is pinned again, after a reactivation
@@ -58,11 +60,22 @@ Answering an authorization from the page is off by default, and nothing here tur
     switch regle <name> on|off             an optional rule of regles/optionnelles (heures-publication)
     switch rangement on|off                rangement_auto: finished one-action sessions archived (on by default)
     switch rangement-heures <n>            rangement_heures: hours without activity before archiving (24 by default)
+    switch rangement-propose on|off        rangement_propose: once a day, a top-level session of the app ends its
+                                           answer with « Qn · Ranger N sessions finies ? » (on by default)
+    switch rangement-sans-demander on|off  rangement_sans_demander: the trial of a standing agreement, the session
+                                           archives the checked sessions without asking (off by default)
     switch reclassement on|off             reclassement_tableau: the board's « Pas si urgent » / « À faire d'abord » button
     switch controle-modele on|off          controle_modele: a session or sub-agent launched without a model is refused
                                            once (hooks/modele_lancement.py; on by default, desktop app sessions only)
     switch controle-format on|off          controle_format: a malformed « À trancher » block is sent back once
                                            (hooks/format_questions.py; on by default, desktop app sessions only)
+    switch controle-fin-de-tour on|off     controle_fin_de_tour: a last message that ends with neither « À trancher »
+                                           nor « Rien à faire de ton côté » is sent back once (same hook; on by default)
+    switch reglage-ouverture on|off        reglage_ouverture: on a session's first message, Claude sets its own model
+                                           and effort per the scale (hooks/reglage_ouverture.py; on by default)
+    switch controle-bareme on|off          controle_bareme: an Opus or Fable sub-agent without « [modèle justifié] », a
+                                           launched session without a model or in Fable without « [fable demandé] » is
+                                           refused (hooks/bareme_modele.py; on by default)
     switch pm "<Prénom Nom>"               pm: the PM's name as the project sheets write it, which makes a project
                                            « à toi »; an empty name ("") removes it (then git's user.name, then the
                                            Mac account's full name)
@@ -211,6 +224,15 @@ SCRIPT_RULES = [f'Bash(python3 ~/Mon\\ Studio/.parc/matin.py {cmd})' for cmd in 
 # The plugin's own rule of an earlier version (`matin.py ecrire` from matin.json.tmp): `apply --autorisations` and
 # `disable` remove it, exactly.
 FORMER_RULES = ['Bash(python3 ~/Mon\\ Studio/.parc/matin.py ecrire)']
+# The connector's three action tools belong to the page (a click of the PM): `repondre` answers a session, `decider`
+# allows or refuses a permission request, `clore` closes a line. Nothing told a session apart from the page, so any
+# session could answer or grant a permission in the PM's place (audit, 2026-11, the gravest point). `apply` denies them
+# in ~/.claude/settings.json `permissions.deny` (a deny rule beats every allow rule, and the pinned page calls the
+# connector through the app, which the rule does not reach: checked on the PM's seat, where `repondre` and `decider`
+# have been denied since early November). It is part of the base installation, with no switch: a protection. `apply`
+# adds the missing ones after a dated copy and records in cockpit.json (`refus_poses`) the ones it added itself;
+# `disable` removes only those, never a rule the PM had already.
+ACTION_TOOLS = ['mcp__mon-studio__repondre', 'mcp__mon-studio__decider', 'mcp__mon-studio__clore']
 APP_CONFIG = APP_SUPPORT / 'claude_desktop_config.json'
 APP_SESSIONS = APP_SUPPORT / 'claude-code-sessions'
 CHANTIERS = MON_STUDIO / 'chantiers'
@@ -803,8 +825,8 @@ def step(name):
     if name != 'matin':
         raise SystemExit('étape inconnue : matin ou terminal')
     lines = ['créerait, avec ton go, la tâche planifiée « Point du matin » (lundi au vendredi, 7h30, Sonnet) : elle lit '
-             'tes mails, Slack et ton agenda pour l\'onglet « Today » et, le lundi, relit les conflits nouveaux des Studios '
-             'dont tu es PM, déjà vérifiés et sans ingestion automatique',
+             'tes mails, Slack et ton agenda pour l\'onglet « Today » et, chaque matin, relit les conflits nouveaux des Studios '
+             'dont tu es PM, déjà vérifiés, ingestion automatique ou non',
              'créerait sa vérification, « Point du matin · vérification » (lundi au vendredi, 11h, 14h et 17h au plus, '
              'Haiku ; Sonnet possible, bien plus cher) : elle range dans « réglé » ce qui a eu sa réponse et ferme au tableau les lignes Slack auxquelles tu as répondu dans le fil']
     rules = script_rules_state()
@@ -816,7 +838,7 @@ def step(name):
                      f'({CLAUDE_SETTINGS}, copie gardée avant), sur les six dont elles ont besoin : les deux seules '
                      'commandes qu\'elles lancent, toutes du plugin, l\'outil « matin_ecrire » du connecteur mon-studio, '
                      'qui n\'écrit que ~/Mon Studio/matin.json, son outil « conflits_juger », qui n\'écrit que le '
-                     'registre des conflits d\'un Studio, le lundi, et ses outils « slack_ouvertes » et « slack_juger », '
+                     'registre des conflits d\'un Studio, et ses outils « slack_ouvertes » et « slack_juger », '
                      'qui ferment au tableau les lignes Slack auxquelles tu as répondu dans le fil')
     elif rules == 'unreadable':
         lines.append(f'laisserait {CLAUDE_SETTINGS}, illisible : les tâches demanderont leurs autorisations à leur '
@@ -881,14 +903,21 @@ def status():
         'reponsesDirectesSessions': state.get('reponses_directes_sessions'),
         'reponsesDirectesMinutes': state.get('reponses_directes_minutes'),
         'rangementAuto': state.get('rangement_auto') is not False,
+        'rangementPropose': state.get('rangement_propose') is not False,
+        'rangementSansDemander': state.get('rangement_sans_demander') is True,
         'reclassementTableau': state.get('reclassement_tableau') is True,
         'controleModele': state.get('controle_modele') is not False,
         'controleFormat': state.get('controle_format') is not False,
+        'controleFinDeTour': state.get('controle_fin_de_tour') is not False,
+        'reglageOuverture': state.get('reglage_ouverture') is not False,
+        'controleBareme': state.get('controle_bareme') is not False,
         'rangementHeures': state.get('rangement_heures') or 24,
         'decoupeSeuilTokens': state.get('decoupe_seuil_tokens'),
         'reglesOptionnelles': state.get('regles_optionnelles') or [],
         'draftsNoted': (INTERNAL / 'brouillons.json').exists(),
         'scriptRules': script_rules_state(),
+        'actionsRefusees': deny_state(),
+        'refusPoses': state.get('refus_poses') or [],
         'formerConflictsTasks': former_conflicts_tasks(),
     }
     s['pmName'], s['pmNameSource'] = pm_name()
@@ -917,6 +946,8 @@ def status():
             todo.append('install')
         elif s['installedVersion'] != s['pluginVersion'] or s['pageCodeCopy'] == 'absent':
             todo.append('update')
+        if s['actionsRefusees'] == 'missing' and 'install' not in todo and 'update' not in todo:
+            todo.append('refuse_actions')
         if s['serverLeftovers']:
             todo.append('remove_server')
         if s['connector'] == 'absent':
@@ -1015,6 +1046,18 @@ def plan():
         lines.append(f'garderait  le connecteur « {CONNECTOR_NAME} », déjà déclaré dans l\'app')
     else:
         lines.append(f'laisserait l\'entrée « {CONNECTOR_NAME} » existante, qui pointe ailleurs que {CONNECTOR_COPY}')
+    if s['actionsRefusees'] == 'missing':
+        have = (((read_json(CLAUDE_SETTINGS, {}) or {}).get('permissions') or {}).get('deny') or []) \
+            if CLAUDE_SETTINGS.exists() else []
+        n = len([r for r in ACTION_TOOLS if r not in have])
+        lines.append(f'refuserait aux sessions {n} geste{"s" if n > 1 else ""} qui ne sont qu\'à toi, sur la page : répondre à '
+                     'une question (repondre), autoriser ou refuser une demande d\'outil (decider), fermer une ligne '
+                     f'(clore) ; une règle de refus ajoutée dans {CLAUDE_SETTINGS} (copie gardée avant, rien d\'autre n\'y '
+                     'change, « désactive Mon Studio » la retire). La page, elle, continue de les faire')
+    elif s['actionsRefusees'] == 'present':
+        lines.append('garderait  le refus aux sessions de répondre, d\'autoriser et de fermer à ta place, déjà dans tes réglages Claude')
+    else:
+        lines.append(f'laisserait {CLAUDE_SETTINGS}, illisible : le refus aux sessions de répondre à ta place resterait à poser à la main')
     pages = [m['nom'] for m in s['missingProjectPages']] if PROJETS_JSON.exists() else studios_found()
     if pages:
         lines.append(f'publierait une page épinglée par projet, {len(pages)} en tout, après la page « Mon Studio » : '
@@ -1045,6 +1088,10 @@ def plan():
                      f"ou marquées « [jetable] », rien à trancher, inactives depuis {s['rangementHeures']} h) : son "
                      "bouton « Ranger » copie la demande d'archivage, que tu colles dans une session ; rien n'est "
                      "archivé sans ce message de toi ; « coupe le rangement » l'arrête")
+        if s['rangementPropose']:
+            lines.append("te proposerait ces sessions une fois par jour, à la fin d'une réponse dans une session de l'app "
+                         "(« Qn · Ranger N sessions finies ? ») : ton « 1 » les archive, rien sans ta réponse ; "
+                         "« coupe la proposition de rangement » l'arrête")
     if state.get('controle_modele') is not False:
         lines.append('refuserait un lancement de session ou de sous-agent sans modèle choisi, jusqu\'à ce que Claude '
                      'le relance avec le modèle du barème (sessions de l\'app seulement ; « coupe le contrôle du modèle » '
@@ -1052,6 +1099,16 @@ def plan():
     if state.get('controle_format') is not False:
         lines.append('renverrait une fois la session reposter un bloc « À trancher » mal formé (sessions de l\'app '
                      'seulement ; « coupe le contrôle du format » l\'arrête)')
+    if state.get('controle_fin_de_tour') is not False:
+        lines.append('renverrait une fois la session finir par « À trancher » ou « Rien à faire de ton côté » quand '
+                     'son dernier message ne finit par aucun des deux (« coupe le contrôle de fin de tour » l\'arrête)')
+    if state.get('reglage_ouverture') is not False:
+        lines.append('dirait à chaque session, à son premier message, de régler elle-même son modèle et son effort selon '
+                     'le barème et de l\'annoncer en une ligne, ton accord demandé seulement pour Fable et Opus high '
+                     '(« coupe le réglage d\'ouverture » l\'arrête)')
+    if state.get('controle_bareme') is not False:
+        lines.append('refuserait un sous-agent en Opus ou Fable sans raison donnée, et une session lancée en Fable sans '
+                     'ta demande (« coupe le contrôle du barème » l\'arrête)')
     lines.extend(cost_lines())
     lines.extend(paste_block())
     return lines
@@ -1098,13 +1155,13 @@ COSTS = [
      'mesuré le 2026-11-18, deux passages réels : 34 à 37 appels et 3,5 à 4 M tokens relus par passage pour 16 à 18 '
      'lignes Slack ouvertes ; le coût suit le nombre de lignes Slack ouvertes ; 3 passages au plus par jour',
      1_140_000, 375_000, 11_205_000, 'haiku'),
-    # The Monday pass of the conflicts (PM, Q18, 2026-11-15), in the same run: only what it adds, a fifth of it a day.
-    # Not measured: a week of about 20 new subjects (about 12,000 tokens of extracts and the judging instructions, 400
-    # output tokens a subject), re-read by the task's 8 calls after `preparer`, x1.5 as conflits.estimer_passe.
-    ('la passe des conflits du lundi, dans « Point du matin » (Sonnet)',
-     'estimation pour une petite semaine, environ 20 sujets nouveaux dans les Studios dont tu es PM sans ingestion '
-     'automatique ; rien une semaine sans rien de nouveau, ni quand la passe est sautée (au-delà de 90 000 caractères '
-     'd\'extraits, le cas aujourd\'hui sur les Studios mesurés, 350 sujets et plus par semaine) ; un lundi sur cinq jours', 6_000, 2_400, 48_000, 'sonnet'),
+    # The daily pass of the conflicts (PM, Q16, 2026-11-23), in the same run: only what it adds. Measured on 2026-11-23,
+    # two real Studios, one heavy day (Friday to Monday): 47 subjects judged by Sonnet, 148,000 tokens written, 314,000
+    # re-read, 14,000 output, 0.54 $; a usual day about a third of it.
+    ('la passe des conflits de chaque matin, dans « Point du matin » (Sonnet)',
+     'mesuré le 2026-11-23 sur deux Studios réels, un lundi chargé : 47 sujets jugés pour 0,54 dollar ; un jour ordinaire '
+     'environ le tiers ; rien un jour sans rien de nouveau ; 200 000 caractères d\'extraits au plus par matin',
+     50_000, 5_000, 105_000, 'sonnet'),
     ('/cockpit:point, une fois par jour', 'skill 1 600 tokens, sortie 250 à 1 250, réponse 500, 3 appels',
      2_850, 500, 285_000, 'sonnet'),
     ('le registre des questions, au démarrage', '700 tokens x 4,8 sessions d\'un Studio', 3_400, 0, 240_000, 'opus'),
@@ -1113,6 +1170,8 @@ COSTS = [
 # Items that cost tokens but were not measured on the author's seat (introduced after the measure, or too rare to
 # measure): the plan names them without a figure rather than an invented one. (item, what it costs)
 UNMEASURED = [
+    ('la consigne de réglage, au premier message de chaque session',
+     'environ 250 tokens, une fois par session, relus à chaque appel suivant de la session'),
     ('la reprise d\'une session par un bouton de réponse',
      'un tour de la session (`claude --resume -p`) avec la relecture de son contexte, au modèle de la session ; '
      'le même tour que si tu répondais dans la session'),
@@ -1413,10 +1472,27 @@ def script_rules_state():
     return 'present' if all(r in allow for r in SCRIPT_RULES) else 'missing'
 
 
+def deny_state():
+    """'present' when every tool of ACTION_TOOLS is in ~/.claude/settings.json `permissions.deny`, 'missing' otherwise,
+    'unreadable' when the file exists but is not a JSON object with lists (then it is never written)."""
+    if not CLAUDE_SETTINGS.exists():
+        return 'missing'
+    settings = read_json(CLAUDE_SETTINGS, None)
+    perms = settings.get('permissions', {}) if isinstance(settings, dict) else None
+    if not isinstance(perms, dict) or not isinstance(perms.get('deny', []), list):
+        return 'unreadable'
+    return 'present' if all(r in perms.get('deny', []) for r in ACTION_TOOLS) else 'missing'
+
+
 def backup_settings():
     """A dated copy of ~/.claude/settings.json next to it, before any change."""
     if CLAUDE_SETTINGS.exists():
-        backup = CLAUDE_SETTINGS.with_name(f'settings.json.avant-mon-studio-{time.strftime("%Y%m%d-%H%M%S")}')
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        backup = CLAUDE_SETTINGS.with_name(f'settings.json.avant-mon-studio-{stamp}')
+        n = 1
+        while backup.exists():  # two changes in the same second (allow, then deny): the first copy, the original, stays
+            n += 1
+            backup = CLAUDE_SETTINGS.with_name(f'settings.json.avant-mon-studio-{stamp}-{n}')
         shutil.copy2(CLAUDE_SETTINGS, backup)
         return backup
     return None
@@ -1445,6 +1521,46 @@ def allow_script_rules(lines):
                  + (f' (copie avant changement : {backup.name})' if backup else ''))
 
 
+def deny_action_tools(lines):
+    """Adds the missing ACTION_TOOLS to `permissions.deny`, the rest of the file kept as it is, after a dated copy.
+    Returns the rules recorded as ours: the ones added now plus the ones an earlier apply added and that are still
+    there (a rule found already present, the PM's, is never ours). None when the file is left alone (unreadable)."""
+    state = deny_state()
+    if state == 'unreadable':
+        lines.append(f'laissé     {CLAUDE_SETTINGS} : illisible, le refus aux sessions de répondre à ta place reste à poser '
+                     f'à la main (règles de refus {", ".join(ACTION_TOOLS)})')
+        return None
+    before = (read_json(STATE, {}) or {}).get('refus_poses')
+    mine = [r for r in (before if isinstance(before, list) else []) if r in ACTION_TOOLS]
+    if state == 'present':
+        return [r for r in mine if r in ((read_json(CLAUDE_SETTINGS, {}) or {}).get('permissions') or {}).get('deny', [])]
+    settings = read_json(CLAUDE_SETTINGS, {}) if CLAUDE_SETTINGS.exists() else {}
+    deny = settings.setdefault('permissions', {}).setdefault('deny', [])
+    added = [r for r in ACTION_TOOLS if r not in deny]
+    backup = backup_settings()
+    deny.extend(added)
+    write_settings(settings)
+    lines.append(f'refusé     aux sessions {len(added)} {"geste" if len(added) == 1 else "gestes"} réservé'
+                 f'{"" if len(added) == 1 else "s"} à la page de Mon Studio ({", ".join(r.rsplit("__", 1)[1] for r in added)}) '
+                 f'dans {CLAUDE_SETTINGS}' + (f' (copie avant changement : {backup.name})' if backup else ''))
+    return [r for r in ACTION_TOOLS if r in mine or r in added]
+
+
+def remove_action_denials(lines, mine):
+    """Removes from `permissions.deny` exactly the rules `apply` added itself (`mine`), nothing else."""
+    settings = read_json(CLAUDE_SETTINGS, None) if CLAUDE_SETTINGS.exists() else None
+    if not mine or not isinstance(settings, dict) or not isinstance(settings.get('permissions'), dict):
+        return
+    deny = settings['permissions'].get('deny')
+    if not isinstance(deny, list) or not any(r in deny for r in mine):
+        return
+    backup = backup_settings()
+    settings['permissions']['deny'] = [r for r in deny if r not in mine]
+    write_settings(settings)
+    lines.append(f'retiré     le refus aux sessions des gestes de la page de {CLAUDE_SETTINGS} '
+                 f'(copie avant changement : {backup.name})')
+
+
 def remove_script_rules(lines):
     """Removes exactly SCRIPT_RULES from `permissions.allow`, nothing else."""
     settings = read_json(CLAUDE_SETTINGS, None) if CLAUDE_SETTINGS.exists() else None
@@ -1468,8 +1584,10 @@ MAC_ONLY = ("Mon Studio s'installe sur Mac seulement : ses chemins (le dossier d
 
 
 def apply(with_connector=False, force=False, script_rules=False):
-    """Only `apply --autorisations`, after the PM's go on `plan` or on `allow_scripts`, touches ~/.claude/settings.json
-    (2026-11-10, Q17: `repair` had added the rules without a go, and the hook's update ran `apply` at every version)."""
+    """Two things touch ~/.claude/settings.json. `apply --autorisations`, after the PM's go on `plan` or on `allow_scripts`,
+    adds the morning tasks' allow rules (2026-11-10, Q17: `repair` had added them without a go, and the hook's update ran
+    `apply` at every version). Every `apply` and `repair` adds the deny rules of the connector's action tools, announced by
+    `plan`, the PM's agreement given (2026-11-26): a protection, never an allowance."""
     if sys.platform != 'darwin':
         print(MAC_ONLY)
         return 2
@@ -1491,7 +1609,12 @@ def apply(with_connector=False, force=False, script_rules=False):
         record_state(drop=('disabled', 'disabledAt'))
         lines.append('réactivé   Mon Studio : le hook de démarrage suit de nouveau les versions du plugin')
     if ok:
-        record_state(version=plugin_version(), installedAt=time.strftime('%Y-%m-%dT%H:%M:%S'), etapes=setup_step_costs())
+        fields = {}
+        mine = deny_action_tools(lines)
+        if mine is not None:
+            fields['refus_poses'] = mine
+        record_state(version=plugin_version(), installedAt=time.strftime('%Y-%m-%dT%H:%M:%S'), etapes=setup_step_costs(),
+                     **fields)
         if s['page']:
             pose_relay_marker(lines)
         build_projets(lines)
@@ -1748,6 +1871,8 @@ def disable():
     remove_copies(lines)
     remove_relay_marker(lines)
     remove_script_rules(lines)
+    remove_action_denials(lines, [r for r in state.get('refus_poses') or [] if r in ACTION_TOOLS])
+    record_state(drop=('refus_poses',))
     lines.append('désactivé  Mon Studio : le hook de démarrage ne recopie plus rien, même à une nouvelle version du plugin')
     lines.append(f'gardé      les fichiers de {MON_STUDIO} (CLAUDE.md, chantiers/, fils-rouges.json…)')
     if state.get('page'):
@@ -1758,7 +1883,7 @@ def disable():
         if path.exists():
             lines.append(f'à faire    supprimer la tâche planifiée « {task} » dans l\'app (delete_scheduled_task) : '
                          'sinon elle tourne encore chaque jour ouvré'
-                         + (', avec la passe des conflits du lundi' if task == 'point-du-matin' else ''))
+                         + (', avec la passe quotidienne des conflits' if task == 'point-du-matin' else ''))
     for task in former_conflicts_tasks():
         lines.append(f'à faire    supprimer l\'ancienne tâche des conflits « {task} » dans l\'app (delete_scheduled_task)')
     if connector_removed:
@@ -1769,7 +1894,9 @@ def disable():
 
 BOOLEAN_SWITCHES = {'autorisations': 'autorisations_tableau', 'reponses-directes': 'reponses_directes',
                     'rangement': 'rangement_auto', 'reclassement': 'reclassement_tableau',
-                    'controle-modele': 'controle_modele', 'controle-format': 'controle_format'}
+                    'controle-modele': 'controle_modele', 'controle-format': 'controle_format', 'controle-fin-de-tour': 'controle_fin_de_tour',
+                    'rangement-propose': 'rangement_propose', 'rangement-sans-demander': 'rangement_sans_demander',
+                    'reglage-ouverture': 'reglage_ouverture', 'controle-bareme': 'controle_bareme'}
 OPTIONAL_RULES = PLUGIN_ROOT / 'regles' / 'optionnelles'
 SEUIL_MIN = 50000
 

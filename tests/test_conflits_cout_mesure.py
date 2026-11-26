@@ -41,7 +41,7 @@ def plan_de_l_essai():
 
 class Rejeu(unittest.TestCase):
     def setUp(self):
-        self.c = conflits.estimer_cout(plan_de_l_essai())
+        self.c = conflits.estimer_cout(plan_de_l_essai(), 'sous-agents')   # the fallback, as measured then
 
     def test_the_replay_is_the_trial(self):
         self.assertEqual((self.c['sujets'], self.c['lots'], self.c['decisions_estimees']), (97, 11, 20))
@@ -75,6 +75,55 @@ class Rejeu(unittest.TestCase):
         with unittest.mock.patch.object(tickets, '_conflits', return_value=conflits):
             e = tickets.estimate(10)
         self.assertGreater(e['usd'], usd('sonnet', conflits.AGENT_SOCLE, 0, 0))
+
+
+# 2026-11-23, the batches judged by the script (`juger-lots`) on a copy of a real Studio: 64 subjects, 7 batches, one
+# headless Sonnet call each (9 calls: 2 batches asked again for refused or missing subjects). Measured from the calls'
+# JSON usage: 138,044 input tokens (no cache), 22,940 output, 0.51 $. The estimate counted 90,625 tokens of extracts.
+MESURE_TETE = (138_044, 22_940, 0.51)
+
+
+def plan_tete():
+    """64 subjects in 7 batches whose extracts weigh what the copy's did (90,625 tokens at 2.7 characters)."""
+    sujet = {'extraits': [{'contexte': 'x' * 3471}], 'ancien': {'texte': 'a'}, 'nouveau': {'texte': 'b'}}
+    ids = [f'S{i}' for i in range(1, 65)]
+    return {'sujets': [dict(sujet, id=i) for i in ids], 'lots': [ids[k:k + 10] for k in range(0, 64, 10)]}
+
+
+class RejeuTete(unittest.TestCase):
+    def setUp(self):
+        self.c = conflits.estimer_cout(plan_tete(), 'tete')
+
+    def test_the_replay_is_the_measure(self):
+        self.assertEqual((self.c['sujets'], self.c['lots']), (64, 7))
+        self.assertLess(abs(self.c['tokens_extraits'] / 90_625 - 1), 0.01)
+
+    def test_the_headless_calls_within_25_percent_and_a_ceiling(self):
+        entree, sortie, usd_mesure = MESURE_TETE
+        self.assertAlmostEqual((entree * 2.0 + sortie * 10.0) / 1e6, usd_mesure, delta=0.01)
+        self.assertLess(abs(self.c['usd_sous_agents'] / usd_mesure - 1), 0.30, self.c['usd_sous_agents'])
+        self.assertGreaterEqual(self.c['usd_sous_agents'], usd_mesure)
+        self.assertLess(abs(self.c['tokens_sous_agents'] / (entree + sortie) - 1), 0.25)
+
+    def test_three_to_five_times_cheaper_than_the_sub_agents(self):
+        avant = conflits.estimer_cout(plan_tete(), 'sous-agents')
+        releve = lambda c: c['usd_sous_agents'] + c['usd_session_releve']
+        self.assertGreaterEqual(releve(avant) / releve(self.c), 2.5)
+        self.assertGreaterEqual(avant['usd'] / self.c['usd'], 2.0)
+        self.assertLess(self.c['usd_session_releve'], avant['usd_session_releve'] / 3)
+
+    def test_the_session_no_longer_grows_with_the_batches(self):
+        petit = conflits.estimer_cout(plan_tete(), 'tete')
+        gros = dict(plan_tete())
+        gros['lots'] = gros['lots'] * 6
+        self.assertEqual(conflits.estimer_cout(gros, 'tete')['usd_session_releve'], petit['usd_session_releve'])
+
+    def test_the_text_says_who_judges(self):
+        t = conflits.texte_cout(self.c)
+        self.assertIn('un appel sans outil par lot lancé par le script', t)
+        self.assertIn('dont 3 000 de consigne', t)
+        self.assertNotIn('78 000', t)
+        self.assertEqual(self.c['mode'], 'tete')
 
 
 class EstimationGardee(unittest.TestCase):

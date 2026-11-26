@@ -80,7 +80,7 @@ class Buttons(unittest.TestCase):
 
     def test_plus_tard_hides_until_tomorrow_and_sends_nothing(self):
         r = run_page(lignes=[ligne(choix=['go', 'pas encore'])], cliquer=[['data-plus-tard', 'r00000000000a']])
-        self.assertIn('>Plus tard</button>', r['tableauAvant'])
+        self.assertIn('aria-label="Plus tard"', r['tableauAvant'])   # an icon since 2026-11-26, its name on hover
         self.assertNotIn('Q7 · Format', r['tableau'])
         self.assertEqual([a for a in r['appels'] if a[0] == 'clore'], [['clore', {'cle': 'r00000000000a', 'plus_tard': True}]])
         self.assertFalse([a for a in r['appels'] if a[0] == 'repondre'])
@@ -111,7 +111,7 @@ class OldLines(unittest.TestCase):
     def test_a_session_stopped_for_two_days_can_be_abandoned(self):
         arretee = ligne(arret='interrupted', depuis=maintenant_ms() - 3 * JOUR, cle=SID)
         r = run_page(lignes=[arretee], cliquer=[['data-abandonner', 'r00000000000a']])
-        self.assertIn('>Abandonner</button>', r['tableauAvant'])
+        self.assertIn('aria-label="Abandonner"', r['tableauAvant'])   # an icon since 2026-11-26, its name on hover
         self.assertNotIn('Fait / Retirer du tableau', r['tableauAvant'])
         self.assertIn('la session passe dans « À ranger »', r['tableau'])
         self.assertNotIn('Abandonner', run_page(lignes=[ligne(arret='interrupted', cle=SID)])['tableau'])

@@ -194,6 +194,113 @@ class Transcript(unittest.TestCase):
         self.assertEqual(rg.humains_et_marqueur('/nonexistent/t.jsonl', parc), (None, False, False))
 
 
+def appel(entree):
+    return json.dumps({'type': 'assistant', 'message': {'role': 'assistant', 'model': 'm', 'content': [
+        {'type': 'tool_use', 'name': 'Read', 'input': entree}]}})
+
+
+class EpicPasPousse(unittest.TestCase):
+    """A session that worked on the ready-to-dev tickets of an epic stays until they are pushed to Jira."""
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d)
+        self.studio = os.path.join(self.d, 'Drive partagés', '3. Clients', 'ACME (Client)', 'Studio - Client')
+
+    def epic(self, nom, pousse):
+        e = os.path.join(self.studio, 'backlog', 'myskills', nom)
+        os.makedirs(os.path.join(e, 'pret-a-dev', '05-jira', 'adf'))
+        if pousse:
+            pathlib.Path(e, 'pret-a-dev', '05-jira', 'cles-jira.json').write_text('{}')
+        return e
+
+    def transcript(self, *entrees):
+        p = os.path.join(self.d, 't.jsonl')
+        pathlib.Path(p).write_text('\n'.join(appel(e) for e in entrees) + '\n', encoding='utf-8')
+        return p
+
+    def test_not_pushed_keeps_the_session_with_the_epic_name(self):
+        e = self.epic('EPS-002-choisir-son-parcours', False)
+        t = self.transcript({'file_path': e + '/pret-a-dev/01-tickets/ticket-2.md'})
+        nom = rg.epic_en_attente(t, self.studio)
+        self.assertEqual(nom, 'EPS-002-choisir-son-parcours')
+        ok, why = rg.juger(finie(epic_attente=nom), H, NOW, parc)
+        self.assertFalse(ok)
+        self.assertEqual(why, 'tickets de l\'epic EPS-002-choisir-son-parcours pas encore poussés dans Jira')
+
+    def test_pushed_epic_is_archivable(self):
+        e = self.epic('EPS-001-choisir-son-service', True)
+        t = self.transcript({'file_path': e + '/pret-a-dev/01-tickets/ticket-1.md'})
+        nom = rg.epic_en_attente(t, self.studio)
+        self.assertEqual(nom, '')
+        self.assertTrue(rg.juger(finie(epic_attente=nom), H, NOW, parc)[0])
+
+    def test_path_with_spaces_and_parentheses_inside_a_bash_command(self):
+        e = self.epic('EPS-003-x', False)
+        t = self.transcript({'command': f'cd "{self.studio}" && cat "{e}/pret-a-dev/02/a.md" | head'},
+                            {'command': 'ls ' + e.replace(' ', '\\ ') + '/pret-a-dev'})
+        self.assertEqual(rg.epic_en_attente(t, None), 'EPS-003-x')
+
+    def test_relative_path_resolves_against_the_session_folder(self):
+        self.epic('EPS-004-y', False)
+        t = self.transcript({'file_path': 'backlog/myskills/EPS-004-y/pret-a-dev/a.md'})
+        self.assertEqual(rg.epic_en_attente(t, self.studio), 'EPS-004-y')
+        self.assertEqual(rg.epic_en_attente(t, None), '')
+
+    def test_epic_folder_gone_keeps_nothing(self):
+        t = self.transcript({'file_path': self.studio + '/backlog/x/EPS-009-parti/pret-a-dev/a.md'})
+        self.assertEqual(rg.epic_en_attente(t, self.studio), '')
+
+    def test_backlog_plugin_without_epic_folder_keeps_the_session(self):
+        """PM, 2026-11-25: an epic sheet written with the backlog plugin, waiting for its review, is never touched."""
+        t = os.path.join(self.d, 'b.jsonl')
+        skill = json.dumps({'type': 'assistant', 'message': {'role': 'assistant', 'model': 'm', 'content': [
+            {'type': 'tool_use', 'name': 'Skill', 'input': {'skill': 'backlog:fiche-epic', 'args': 'epic-x'}}]}})
+        pathlib.Path(t).write_text(skill + '\n', encoding='utf-8')
+        nom = rg.epic_en_attente(t, self.studio)
+        self.assertEqual(nom, rg.BACKLOG_SANS_EPIC)
+        ok, why = rg.juger(finie(epic_attente=nom), H, NOW, parc)
+        self.assertFalse(ok)
+        self.assertIn('plugin backlog', why)
+        for entree in ({'type': 'user', 'message': {'content': '<command-name>/backlog:rediger</command-name>'}},
+                       {'type': 'assistant', 'message': {'content': [
+                           {'type': 'tool_use', 'name': 'Agent', 'input': {'subagent_type': 'backlog:redacteur-po'}}]}}):
+            pathlib.Path(t).write_text(json.dumps(entree) + '\n', encoding='utf-8')
+            self.assertEqual(rg.epic_en_attente(t, self.studio), rg.BACKLOG_SANS_EPIC, entree)
+
+    def test_epic_sheet_being_written_keeps_the_session_even_beside_a_pushed_epic(self):
+        modele = self.epic('EPS-001-pousse', True)
+        fiche = os.path.join(self.studio, 'backlog', 'myskills', 'EPS-007-en-cours')
+        os.makedirs(os.path.join(fiche, 'fiche-epic'))
+        t = self.transcript({'file_path': modele + '/pret-a-dev/01-tickets/t.md'},
+                            {'file_path': fiche + '/fiche-epic/fiche.md'})
+        self.assertEqual(rg.epic_en_attente(t, self.studio), 'EPS-007-en-cours')
+
+    def test_backlog_mentioned_without_use_keeps_nothing(self):
+        t = os.path.join(self.d, 'c.jsonl')
+        pathlib.Path(t).write_text(json.dumps({'type': 'user', 'message': {
+            'content': 'Le plugin backlog:fiche-epic est prêt, voir docs/backlog:notes.'}}) + '\n', encoding='utf-8')
+        self.assertEqual(rg.epic_en_attente(t, self.studio), '')
+
+    def test_backlog_with_pushed_epic_is_archivable(self):
+        e = self.epic('EPS-008-pousse', True)
+        t = os.path.join(self.d, 'd.jsonl')
+        skill = json.dumps({'type': 'assistant', 'message': {'content': [
+            {'type': 'tool_use', 'name': 'Skill', 'input': {'skill': 'backlog:pousser'}}]}})
+        pathlib.Path(t).write_text(skill + '\n' + appel({'file_path': e + '/pret-a-dev/a.md'}) + '\n', encoding='utf-8')
+        self.assertEqual(rg.epic_en_attente(t, self.studio), '')
+
+    def test_other_paths_and_other_blocks_are_ignored(self):
+        e = self.epic('EPS-005-z', False)
+        t = os.path.join(self.d, 'u.jsonl')
+        pathlib.Path(t).write_text(json.dumps({'type': 'user', 'message': {'content': e + '/pret-a-dev/a.md'}}) + '\n'
+                                   + appel({'file_path': e + '/notes.md'}) + '\n')
+        self.assertEqual(rg.epic_en_attente(t, self.studio), '')
+
+    def test_unreadable_transcript_is_a_doubt(self):
+        self.assertIsNone(rg.epic_en_attente('/nonexistent/t.jsonl', None))
+        self.assertFalse(rg.juger(finie(epic_attente=None), H, NOW, parc)[0])
+
+
 class Folder(unittest.TestCase):
     def test_no_folder_is_clean(self):
         self.assertFalse(rg.dossier_sale(None))
@@ -241,13 +348,18 @@ class Hook(unittest.TestCase):
         rg.OUT.write_text(json.dumps(dict({'calcule': NOW, 'a_ranger': a_ranger, 'rangees': []}, **kw)))
 
     def test_never_hands_an_order_to_a_session(self):
+        # Outside the desktop app nothing at all; inside, since 0.3.19, a question to ask, never an order to archive
+        # (test_cockpit_rangement_propose.py).
+        ancien = os.environ.pop('CLAUDE_CODE_HOST_SESSION_ID', None)
+        if ancien is not None:
+            self.addCleanup(os.environ.__setitem__, 'CLAUDE_CODE_HOST_SESSION_ID', ancien)
         for cli in ('cli-pm', 'cli-fille', None):
             self.assertEqual(rg.hook({'session_id': cli}, NOW), '')
             self.assertEqual(rg.hook({'session_id': cli}, NOW + 7 * 3600 + 60), '')
         self.assertNotIn('confiees', json.loads(rg.OUT.read_text()))
         src = (ROOT / 'hooks' / 'rangement.py').read_text(encoding='utf-8')
-        self.assertNotIn('def consigne', src)
         self.assertNotIn('archive-les', src)
+        self.assertIn("N'archive ", src)
 
     def test_switch_off_and_disabled_say_nothing(self):
         self.liste([], calcule=NOW - 2 * 3600)

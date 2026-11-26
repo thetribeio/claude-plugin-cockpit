@@ -93,7 +93,7 @@ class Line(unittest.TestCase):
         l = board(ANCIEN)[0]
         affiche = f"{l['affiche_titre']} : {l['affiche_suite']}"
         self.assertTrue(affiche.startswith('Q43 · Suite du mail : tu le relis'))
-        self.assertTrue(affiche.endswith('…'))
+        self.assertNotIn('…', affiche)
         self.assertLessEqual(len(affiche), parc.LIGNE_MAX + 2)
         self.assertIn('Docs partagés avec le client', board(ANCIEN)[0]['depli']['question'])   # the click: in full
 

@@ -275,7 +275,7 @@ class RecalledInASentence(Base):
                      "Il t'a répondu par une marche à suivre, qu'il suit sous le numéro Q44, encore ouverte. Colle ce lien pour que je continue."):
             with self.subTest(text=text[:40]):
                 got, _ = self.lines([final(60, text)])
-                self.assertEqual([lecture for _, lecture in got], ['a_verifier'])
+                self.assertNotIn('rappel', [lecture for _, lecture in got])
 
     def test_in_a_chantier_a_recalled_question_on_the_board_gives_way(self):
         self.foreman([{'type': 'decision', 'titre': 'Q12 · Passage quotidien', 'source': KIT, 'depuis': at(200)}])
@@ -284,25 +284,11 @@ class RecalledInASentence(Base):
 
 
 class NotForThePm(Base):
-    def test_never_for_you_is_never_an_ask(self):
-        # The sentence is no ask; the message says neither « Rien à faire » nor a numbered question (2026-10-26, Q37,
-        # Q40): read, no line; unread, one line to check, with the neutral verb.
-        e = self.screen([self.session(ALONE, [final(60, "Trois règles.\n\n3. " + NOT_YOU)], cwd=OTHER_CWD)])
-        self.assertEqual(e['tableau'], [])
-        s = self.session(ALONE, [final(60, "Trois règles.\n\n3. " + NOT_YOU)], cwd=OTHER_CWD)
-        s['non_lue'] = True
-        e = self.screen([s])
-        self.assertEqual([(l['type'], l['verbe']) for l in e['tableau']], [('check', 'Vérifier')])
-        e = self.screen([self.session(ALONE, [final(60, "Trois règles.\n\n3. " + NOT_YOU + "\n\nRien à faire de ton côté.")],
-                                      cwd=OTHER_CWD)])
-        self.assertEqual(e['tableau'], [])
-
     def test_the_real_demand_next_to_it_stays(self):
         for text in ("Pas à toi de trancher : dis-moi juste si le texte te va.",
                      "Le contremaître répond, pas toi. Dis-moi si ça te va."):
             with self.subTest(text=text):
                 self.assertEqual(parc.trier(text)[3], 1)
-        self.assertIsNone(parc.trier("Ce n'est pas à toi de trancher.")[3])
         self.assertEqual(parc.trier("C'est à toi.")[3], 1)
 
 

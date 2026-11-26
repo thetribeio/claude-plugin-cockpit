@@ -25,6 +25,9 @@ class ModelAtLaunch(unittest.TestCase):
             env.pop('CLAUDE_CODE_HOST_SESSION_ID', None)
             if host is not None:
                 env['CLAUDE_CODE_HOST_SESSION_ID'] = host   # a session of the desktop app
+            if raw is None and isinstance(payload, dict):
+                payload = dict({'cwd': str(Path(home) / 'Mon Studio')}, **payload)   # a session in a Studio
+                (Path(home) / 'Mon Studio').mkdir(exist_ok=True)
             return subprocess.run([sys.executable, str(HOOK)], input=raw if raw is not None else json.dumps(payload),
                                   capture_output=True, text=True, env=env, timeout=20)
 

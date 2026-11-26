@@ -651,16 +651,20 @@ class PageButtons(unittest.TestCase):
         self.assertIn('data-reveil="' + LOCAL + '" data-question="Q9" data-choix="1" data-copier="Q9 1"', row)
         self.assertIn('data-copier="Q9 2"', row)
         self.assertNotIn('data-copier="Q9 pas encore"', row)
-        self.assertNotIn('class="act k-task ouvrir"', row)   # the way into the session stays, under the answers
+        # The answers under the question, « Ouvrir ↗ » alone in « Agir » (PM, 2026-11-26: one line per gesture made rows high).
+        self.assertIn('data-copier="Q9 1"', row.split('<td class="type">')[0].split('<td class="action">')[1])
+        self.assertEqual(row.count('>Ouvrir ↗<'), 1)
 
     def test_the_answer_buttons_replace_the_open_verb(self):
         # Essai Q11 du 2026-11-02 : « Go ↗ » (ouvre la session) et « Go » (la réponse) côte à côte ; le PM ouvrait.
         rows = self.rows(self.run_page(self.payload())['tableau'])
         for r in [r for r in rows if 'Q11 ·' in r or 'Q12 ·' in r]:
-            self.assertNotIn('class="act k-task ouvrir"', r)   # « Ouvrir ↗ » stays, under the answers (« ouvrir sous »)
+            self.assertIn('class="reponses"', r.split('<td class="type">')[0])   # the answers under the question
+            self.assertEqual(r.count('>Ouvrir ↗<'), 1)                            # « Ouvrir ↗ » stays, in « Agir »
             self.assertEqual(r.count('>Go'), 1)
         q9 = [r for r in rows if 'Q9 ·' in r][0]
         self.assertIn('class="act k-task ouvrir"', q9)                     # a decision without numbered options keeps its verb
+        self.assertNotIn('class="reponses"', q9)
 
     def test_the_page_says_when_direct_answers_cannot_work(self):
         self.assertEqual(self.run_page(self.payload())['noteAttentes'], '')

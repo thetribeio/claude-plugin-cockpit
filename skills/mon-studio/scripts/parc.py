@@ -21,7 +21,9 @@ local (mcp_mon_studio.py, qui appelle construire et pour_la_page) ; mon-studio.m
 Rien n'est écrit dans une session, rien n'est marqué lu ou non lu, rien n'est archivé.
 """
 import argparse
+import copy
 import datetime as dt
+import functools
 import glob
 import hashlib
 import importlib.util
@@ -32,6 +34,7 @@ import re
 import stat
 import struct
 import sys
+import threading
 import time
 import unicodedata
 
@@ -69,6 +72,10 @@ INTERNE = SORTIE / '.parc'
 LECTURE_OK = 'lecture-app-ok'   # in INTERNE: Mon Studio has read the app once on this Mac (lecture_app)
 
 TRAVAIL_S = 180          # un tour inachevé dont le fichier a bougé il y a moins de 3 min : Claude travaille
+# Un outil sans résultat et sans demande d'autorisation tracée (hooks/autorisation.py) tourne : une suite de tests, un
+# sous-agent (PM, 2026-11-26 : deux sessions en plein travail lues « arrêtée sur une autorisation »). Passé ce délai
+# sans que le fichier bouge, la session est arrêtée en plein travail (app fermée, tour coupé), sans autorisation.
+OUTIL_LONG_S = 1800
 FIN_INITIALE = 512 * 1024
 LIGNES_MAX = 3
 LONGUEUR_MAX = 420       # au-delà, la phrase est coupée net (les mots restent ceux de Claude)
@@ -104,10 +111,48 @@ def lire_json(chemin, defaut=None):
         return defaut
 
 
+# --- the sort of a message, kept by its text ------------------------------------------------------------------
+#
+# The functions that read a message (its questions, its reminders, its sentences) depend only on its text and on the
+# PM's glossary (marqueurs.md). Each reading of the board read the same messages again (2026-11-23: 3 to 6 s of the
+# 6 s of a reading): their answers are kept by (text, arguments), all forgotten when the glossary changes, and a copy
+# is handed out, so that a caller that changes what it got never changes what is kept.
+TEXTES_MAX = 4000   # answers kept per function; beyond, all are forgotten (the next reading fills it again)
+_textes_lus = []
+
+
+def selon_le_texte(copie='profonde'):
+    """Decorator: keeps the function's answers by (arguments, glossary). `copie`: 'profonde' (a deep copy is handed
+    out), 'liste' (a list of unchangeable values: a new list), None (an unchangeable value)."""
+    def decorer(fonction):
+        memo = {'gl': None, 'res': {}}
+        _textes_lus.append(memo)
+
+        @functools.wraps(fonction)
+        def lire(*args, **kwargs):
+            gl = signature_marqueurs()
+            if memo['gl'] != gl or len(memo['res']) > TEXTES_MAX:
+                memo.update(gl=gl, res={})
+            cle = (args, tuple(sorted(kwargs.items()))) if kwargs else args
+            try:
+                r = memo['res'][cle]
+            except KeyError:
+                r = memo['res'][cle] = fonction(*args, **kwargs)
+            except TypeError:   # an argument that is not hashable: computed, not kept
+                return fonction(*args, **kwargs)
+            if copie == 'profonde':
+                return copy.deepcopy(r)
+            return list(r) if copie == 'liste' else r
+        lire.calculer = fonction
+        return lire
+    return decorer
+
+
 def ecrire_atomique(chemin, texte):
     chemin.parent.mkdir(parents=True, exist_ok=True)
-    # One temporary file per process: the connector (two instances at times) and the session hook write the same files.
-    tmp = chemin.with_name(f'{chemin.name}.{os.getpid()}.tmp')
+    # One temporary file per process and thread: the connector (two instances at times, and its background reading of
+    # the board) and the session hook write the same files.
+    tmp = chemin.with_name(f'{chemin.name}.{os.getpid()}.{threading.get_ident()}.tmp')
     tmp.write_text(texte, encoding='utf-8')
     os.replace(tmp, chemin)
 
@@ -147,7 +192,26 @@ def fiches(cache):
     for chemin in list(cache['fiches']):
         if chemin not in vues:
             del cache['fiches'][chemin]
-    return sortie
+    masques = projets_masques()
+    return [m for m in sortie if not est_masque(m.get('cwd'), masques)] if masques else sortie
+
+
+# The projects the PM no longer follows (PM, 2026-11-24, before a demo): `projets_masques` in cockpit.json, a list of
+# folders. Their sessions stay in the app's sidebar, untouched; Mon Studio simply never reads them (board, project
+# views, list of projects, morning brief). A folder hides its subfolders and the app's worktrees of its repository.
+def projets_masques():
+    etat = lire_json(INTERNE / 'cockpit.json', {}) or {}
+    liste = etat.get('projets_masques') if isinstance(etat, dict) else None
+    return {unicodedata.normalize('NFC', os.path.normpath(str(d))) for d in (liste or []) if isinstance(d, str) and d}
+
+
+def est_masque(cwd, masques=None):
+    masques = projets_masques() if masques is None else masques
+    d = racine(cwd)
+    if not d or not masques:
+        return False
+    d = unicodedata.normalize('NFC', d)
+    return any(d == m or d.startswith(m.rstrip(os.sep) + os.sep) for m in masques)
 
 
 def taches_planifiees():
@@ -224,7 +288,28 @@ def _entrees_bloc(b):
         i += lv
 
 
+# Les tables .ldb de LevelDB ne changent jamais une fois écrites (une compaction en écrit d'autres) : leurs versions des
+# pastilles sont gardées en mémoire par (chemin, mtime, taille). La décompression snappy en Python pur coûtait près de
+# 2 s par lecture du tableau (2026-11-23).
+_tables_lues = {}
+
+
 def _versions_table(chemin):
+    try:
+        st = os.stat(chemin)
+        cle = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        cle = None
+    gardee = _tables_lues.get(chemin)
+    if cle is not None and gardee is not None and gardee[0] == cle:
+        return list(gardee[1])
+    versions = list(_versions_table_lue(chemin))
+    if cle is not None:
+        _tables_lues[chemin] = (cle, versions)
+    return list(versions)
+
+
+def _versions_table_lue(chemin):
     data = open(chemin, 'rb').read()
     pied = data[-48:]
     _, j = _varint(pied, 0)
@@ -280,7 +365,11 @@ def pastilles():
     for _ in range(2):
         try:
             versions = []
-            for chemin in glob.glob(str(STOCKAGE_APP / '*.ldb')):
+            tables = glob.glob(str(STOCKAGE_APP / '*.ldb'))
+            for chemin in list(_tables_lues):   # une table retirée par la compaction quitte la mémoire
+                if chemin not in tables:
+                    del _tables_lues[chemin]
+            for chemin in tables:
                 versions.extend(_versions_table(chemin))
             for chemin in glob.glob(str(STOCKAGE_APP / '*.log')):
                 versions.extend(_versions_journal(chemin))
@@ -467,10 +556,7 @@ def _analyser(chemin, maintenant):
             if carte:
                 return dict(carte, etat='suspens', outil=FIN_DE_TOUR)
             res = {'etat': 'travaille' if recent else 'suspens', 'depuis': horodatage(dernier) or mtime}
-            attente = outil_en_attente(entrees[:i + 1])
-            if attente and res['etat'] == 'suspens':
-                res['attente'] = attente
-            return res
+            return outil_qui_attend(res, outil_en_attente(entrees[:i + 1]), chemin, mtime, maintenant)
         if recent:
             return {'etat': 'travaille', 'depuis': mtime}
         res = {'etat': 'main', 'depuis': horodatage(dernier) or mtime}
@@ -532,9 +618,27 @@ def _analyser(chemin, maintenant):
     if menu:
         return {'etat': 'suspens', 'depuis': horodatage(dernier) or mtime, 'outil': 'AskUserQuestion', 'menu': menu}
     res = {'etat': 'travaille' if recent else 'suspens', 'depuis': horodatage(dernier) or mtime, 'outil': outil}
-    attente = outil_en_attente(entrees[:i + 1])
-    if attente and res['etat'] == 'suspens':
+    return outil_qui_attend(res, outil_en_attente(entrees[:i + 1]), chemin, mtime, maintenant)
+
+
+def demande_tracee(chemin, depuis):
+    """True when hooks/autorisation.py traced a request of this session since its pending tool was called (depuis)."""
+    try:
+        t = json.loads((INTERNE / 'demandes-autorisation' / (pathlib.Path(chemin).stem + '.json')).read_text(encoding='utf-8')).get('t')
+    except (OSError, ValueError, AttributeError):
+        return False
+    return isinstance(t, (int, float)) and t >= (depuis or 0) - 2
+
+
+def outil_qui_attend(res, attente, chemin, mtime, maintenant):
+    """A pending tool waits for the PM's authorization only when its request was traced (attente: what it would do).
+    Untraced, it runs (a long test suite, a subagent): the session works, until OUTIL_LONG_S without a move."""
+    if not attente or res['etat'] != 'suspens':
+        return res
+    if demande_tracee(chemin, res.get('depuis')):
         res['attente'] = attente   # l'outil qui attend l'accord du PM, et un aperçu de ce qu'il ferait
+    elif maintenant - mtime < OUTIL_LONG_S:
+        res['etat'] = 'travaille'
     return res
 
 
@@ -803,6 +907,7 @@ def encadre_ouvert(entrees):
     return None
 
 
+@selon_le_texte(None)
 def rappel_sans_numero(texte):
     """Vrai si une ligne « Encore ouvert » du message ne porte aucun numéro de question. L'intitulé seul sur sa ligne
     (« Encore ouvert : », le format du PM) suivi de ses questions numérotées n'en est pas un (mesuré le 2026-11-18 :
@@ -834,11 +939,10 @@ def analyser_cache(chemin, cache, maintenant):
 
 # --- le tri des phrases ----------------------------------------------------------------------------------
 #
-# Une phrase est gardée si elle attend une réponse ou un geste du PM. Priorités (la plus petite d'abord) :
+# Une phrase est gardée si elle attend une réponse du PM. Priorités (la plus petite d'abord) :
 #   1 feu vert, validation, décision demandée     2 question qui lui est adressée
-#   3 élément d'une section ou d'une liste annoncée comme « pour toi »
-#   4 geste à faire (impératif en tête, « tu peux », case à cocher)
-#   5 proposition ou recommandation de Claude (attend un oui), seulement s'il n'y a rien de plus fort
+# Mon Studio ne devine plus les gestes (impératif, « tu peux », case à cocher), les éléments d'une section « pour toi »
+# ni les propositions de Claude : une session dit ce qu'elle attend par ses questions numérotées.
 # Les options qui suivent une question gardée la rejoignent sur sa ligne. Au plus trois lignes, les plus
 # fortes, puis remises dans l'ordre du message.
 
@@ -861,45 +965,6 @@ NEGATION = re.compile(r"(?i)\brien\s+(?:à\s+faire|de\s+ton|d['’]autre|n['’]
                       r"|\bpas\s+besoin\b|\bn['’]a\s+(?:pas|plus)\s+besoin\b|\bsans\s+(?:rien|action)\b|\bpas\s+de\s+feu\s+vert\b"
                       r"|\bsi\s+(?:ce\s+n['’]est\s+pas\s+le\s+cas|ça\s+ne\s+(?:marche|fonctionne|va)\s+pas|quelque\s+chose\s+(?:cloche|coince|ne\s+va\s+pas)"
                       r"|tu\s+(?:vois|as|rencontres)\s+(?:un|une)\s+(?:souci|problème|erreur|bug))")
-# Une phrase qui annonce une question close (« Q144 (Kit : feu vert aux écritures…) est soldée au
-# tableau. » sortait en feu vert) : un compte rendu, jamais une demande, même avec « feu vert », « go » ou « relire ».
-CLOSE = re.compile(r"(?i)\b(?:est|sont|était|étaient|reste|restent|a\s+été|ont\s+été|déjà|bien|maintenant|désormais)\s+"
-                   r"(?:(?:déjà|bien|maintenant|désormais|toutes?|tous)\s+)*"
-                   r"(?:soldée?s?|réglée?s?|résolue?s?|fermée?s?|clos(?:es?)?)\b"
-                   r"|\bsans\s+objet\b|\bdéjà\s+fait(?:e|es|s)?\b"
-                   r"|\best\s+(?:\S+\s+){0,2}au\s+tableau\b|\bsont\s+(?:\S+\s+){0,2}au\s+tableau\b")
-SUJET_QUESTION = re.compile(r"(?i)\bQ\d{1,3}\b|\b(?:questions?|attentes?|lignes?)\b")   # la phrase parle d'une question
-# Une phrase qui dit que rien n'attend le PM (contremaître d'un Studio : « Rien n'est en attente de
-# ta part de mon côté. », fin d'un message, restait 15 h au tableau en « Répondre », par « en attente de ta ») : jamais
-# une demande, dans n'importe quel ordre (« De ta part, rien n'est attendu »). La négation ouvre sa proposition et porte
-# sur l'attente ; le PM est nommé dans la phrase. Une autre proposition qui s'adresse au PM (« Une question t'attend,
-# rien d'urgent », « Aucune question pour toi, relance la CI »), une exception (« sauf », « mais », « au-delà ») ou un
-# PM attendu plus tard (« sans ton go », « avant ta validation ») la laisse au tri.
-RIEN_POUR_TOI = re.compile(r"(?i)^(?:il\s+n['’]y\s+a|il\s+ne\s+(?:reste|manque)|tu\s+n['’]as|je\s+n['’](?:ai|attends)|on\s+n['’](?:a|attend))?"
-                           r"\s*(?:(?:donc|du\s+coup|encore|toujours|plus|absolument)\s+)*"
-                           r"(?:(?:rien|aucune?|nul(?:le)?)\b|(?:pas|plus)\s+(?:de\b|d['’]))")
-ATTENTE = re.compile(r"(?i)\battend|\battente|\bdemandes?\b|\bgestes?\b|\bquestions?\b|\bactions?\b|\bdécisions?\b|\bréponses?\b"
-                     r"|\bretours?\b|\bfeux?\s+verts?\b|\bgo\b|\bvalidations?\b|\brequise?s?\b"
-                     r"|\bà\s+(?:faire|trancher|décider|valider|arbitrer|signaler|relire|confirmer)\b")
-TOI = re.compile(DEUXIEME + r"|\bde\s+ta\s+part\b|\bcôté\s+PM\b", re.I)
-# Une phrase qui parle d'une demande ou d'une ligne, sans s'adresser au PM (« Les vraies demandes restent, comme … ») : un compte rendu sur les demandes, pas une demande. Seulement « demande » et
-# « ligne » précédés d'un déterminant : « Mes questions restent ouvertes (…) » ou « Feu vert, quand ce sera prêt : … »
-# sont de vraies demandes (essai sur 14 jours de messages). Hors des sections « pour toi ».
-PARLE_DE_DEMANDE = re.compile(r"(?i)^(?:les?|la|l['’]|une?|des|cette|ces|chaque|leurs?|ses|sa|son)\s+(?:\w+\s+){0,2}?(?:demandes?|lignes?)\b"
-                              r"(?!\s*:)")
-EXCEPTION = re.compile(r"(?i)\b(?:mais|sauf|hormis|excepté|seulement|sinon|hors)\b|\bà\s+part\b|\ben\s+dehors\s+d|\bsi\s+ce\s+n['’]est\b"
-                       r"|\bau-delà\b|\bà\s+l['’]exception\b|\ben\s+plus\s+d"
-                       # « Rien ne sort sans ton go », « …avant ta validation » : la négation porte sur l'écriture, le PM
-                       # reste attendu.
-                       r"|\b(?:sans|avant|tant\s+que|tant\s+qu['’]|en\s+attendant|jusqu['’]à)\b")
-LOCATIF = re.compile(r"(?i)\bde\s+(?:ta|ma|notre)\s+part\b|\b(?:de\s+)?(?:ton|mon|notre)\s+côté\b|\bcôté\s+PM\b"
-                     r"|\bpour\s+(?:toi|l['’]instant|le\s+moment)\b|\bà\s+ce\s+stade\b|\b(?:maintenant|aujourd['’]hui|donc|du\s+coup"
-                     r"|bref|ici|voilà|et|bonne\s+nouvelle)\b")
-# « …, jamais à toi », « pas à toi », « pas de ton côté » : la phrase dit justement que ce n'est pas au PM (contrôle des
-# lignes du 2026-10-20 : « Un écart sans décision tracée se demande au fil rouge du sujet, jamais à toi. » sortait en
-# demande, « à toi » en fin de phrase). Le morceau nié est retiré avant le tri, le reste de la phrase est jugé seul :
-# « Pas à toi de trancher : dis-moi juste si le texte te va. » reste une demande.
-NIE_TOI = re.compile(r"(?i)[,;]?\s*\b(?:jamais|pas|plus|non|ni)\s+(?:à\s+toi|pour\s+toi|de\s+ton\s+(?:côté|ressort)|toi)\b")
 INVITE = re.compile(r"(?i)^(?:tu\s+peux|tu\s+dois|tu\s+pourras|il\s+te\s+(?:reste|faut|suffit)|il\s+faudra\s+que\s+tu"
                     r"|peux[- ]tu|pourrais[- ]tu|veux[- ]tu|merci\s+de|n['’]oublie\s+pas|pense\s+à)\b")
 RAPPORT = re.compile(r"(?i)^(?:j['’]ai|je\s+n['’]ai|j['’]avais|je\s+viens|je\s+suis|c['’]est\s+fait|fait\b|corrigé|ajouté|écrit"
@@ -915,40 +980,19 @@ transfère déplace renomme importe exporte télécharge
 """.split())
 A_INFINITIF = re.compile(r"(?i)\b(?:prêtes?\s+|prêts?\s+)?à\s+(?:coller|lancer|relancer|ouvrir|copier|relire|signer|envoyer|transmettre"
                          r"|remplir|renseigner|tester|installer|exécuter|approuver|contester|poster)\b")
-MESSAGE_A_ENVOYER = re.compile(r"(?i)^(?:le\s+|un\s+|ton\s+)?(?:message|mail|courriel|texte|brouillon|réponse)\s+"
-                               r"(?:pour|à\s+(?:envoyer|poster|transmettre|coller|copier))\b[^.?!]{0,80}:$")
 PROPOSE = re.compile(r"(?i)\b(?:je\s+te\s+propose|je\s+propose|je\s+recommande|je\s+suggère|ma\s+recommandation)\b")
 CONNECTEURS = re.compile(r"(?i)^(?:puis|ensuite|enfin|alors|et|d['’]abord|après|sinon|maintenant)\b[\s,:]*")
 SUBORDONNEE = re.compile(r"(?i)^(?:pour|si|s['’]ils?|quand|lorsque|dès\s+que|une\s+fois|avant\s+de|en\s+attendant|côté)\b[^,:]{0,140}[,:]\s*")
+# Un intitulé qui annonce ce qui reste à la charge du PM : une ligne en gras seule qui le porte est un titre (unites), et
+# rappels_en_phrase y reconnaît la liste de numéros de question qui suit.
 SECTION_POUR_TOI = re.compile(r"(?i)(?:\bà\s+toi\b|pour\s+toi|de\s+ton\s+côté|ton\s+tour|\btes\s+(?:actions?|gestes?|décisions?)"
                               r"|à\s+(?:contester|confirmer|relire|vérifier|revoir)\b"
                               r"|ce\s+que\s+j['’]attends|ce\s+qu['’]il\s+(?:te\s+)?reste|reste\s+à\s+faire|à\s+(?:valider|trancher|décider|arbitrer)"
                               r"|feux?\s+verts?|décisions?\s+(?:attendues?|à\s+prendre)|questions?\s+pour\s+toi|côté\s+PM"
                               r"|prochaines?\s+étapes?|next\s+steps?|à\s+faire\b|consignes?)")
-PROCEDURE_TOI = re.compile(r"(?i)^(?:pour|avant\s+de|afin\s+de)\s+\w+(?:er|ir|re)\b.*\b(?:ton|ta|tes|toi|tu|te)\b")
-# Une action, c'est une demande (PM, 2026-10-13 : « vérifier et comprendre si la session en elle-même attend une
-# réponse de ma part ») : une question, un go, une réponse demandée, ou un geste sans lequel la session ne repart pas.
-# Un intitulé qui demande une réponse : ses éléments sont des demandes, même à l'impératif.
-SECTION_DEMANDE = re.compile(r"(?i)ce\s+que\s+j['’]attends|à\s+(?:valider|trancher|décider|arbitrer|contester|confirmer|relire|vérifier|revoir)\b"
-                             r"|feux?\s+verts?|décisions?\s+(?:attendues?|à\s+prendre)|questions?\s+pour\s+toi|\btes\s+décisions?")
-# Un geste attendu : la phrase lie la suite du travail au geste, ou montre un menu ou une autorisation en attente.
-# Sans cela, un impératif est un conseil ou une nouvelle (« Tu peux fermer cette session », « Voici le texte à coller »).
-REPART = re.compile(r"""(?ix)
-    \b(?:relance|reviens|rappelle|recontacte)[- ]moi\b | \breviens\s+(?:ici|me\s+voir|vers\s+moi|dans\s+cette\s+session)\b
-  | \bon\s+reprend\b | \bje\s+(?:reprends|reprendrai|continue(?:rai)?|poursuis|poursuivrai|termine(?:rai)?|finis|finirai|enchaîne(?:rai)?)\b
-  | \bpour\s+(?:que\s+je|avancer|continuer|poursuivre|reprendre|débloquer|repartir)\b | \bavant\s+que\s+je\b
-  | \bune\s+fois\s+(?:que\s+)?(?:c['’]est\s+)?fait\b | \bdès\s+que\s+c['’]est\s+fait\b | \bsans\s+(?:ça|cela|quoi)\b
-  | \bvient\s+d['’]appara[iî]tre\b | \b(?:affichée?s?|apparue?s?)\s+(?:juste\s+)?(?:au-dessus|ci-dessus|plus\s+haut)\b
-  | \bautoris(?:e|es|er|ation|ations)\b | \bapprouve\b | [«"]\s*connecter\s*[»"]
-""")
 # Avertissement pour plus tard (« Quand tu ouvriras le tableau…, accepte »), comme « si… » : pas une action.
 CONDITION = re.compile(r"(?i)^(?:si|s['’]ils?|sinon|quand|lorsque?|la\s+prochaine\s+fois|le\s+jour\s+où|au\s+besoin|en\s+cas\s+de"
                        r"|à\s+l['’]occasion|le\s+moment\s+venu|plus\s+tard|la\s+première\s+fois)\b")
-# Une demande annoncée pour plus tard, par quelqu'un d'autre (« puis te demandera ton go ») : pas encore une action.
-A_VENIR = re.compile(r"(?i)\bte\s+(?:demandera|demanderont|posera|poseront|proposera|proposeront|enverra|enverront)\b")
-# Facultatif : rien n'attend (« Tu peux fermer cette session-ci », « Dis-moi si tu veux ajuster le ton »).
-FACULTATIF = re.compile(r"(?i)^(?:tu\s+peux|tu\s+pourras|libre\s+à\s+toi)\b|\bquand\s+tu\s+(?:veux|voudras)\b|\bn['’]importe\s+quand\b"
-                        r"|\bdis[- ](?:le[- ])?(?:moi[- ])?si\s+tu\s+(?:veux|voulais|le\s+souhaites|préfères)\b")
 # « Rien à faire de ton côté » (format du PM, règle 9) : le message ne demande rien hors de ses questions numérotées.
 # La phrase pleine, au plus avec « pour l'instant » ou « d'ici là » : pas sous condition (« Si…, rien à faire de ton
 # côté »), ni avec une exception (« …, sauf ce Q22 ok ») ou un sujet (« … sur le Studio pilote »), qui laissent le reste.
@@ -958,7 +1002,6 @@ RIEN_SEUL = re.compile(r"(?i)^(?:[\s,]*(?:pour\s+l['’]instant|pour\s+le\s+mome
                        r"|ici|dans\s+cette\s+session))*[\s.!…*_]*$")
 INTERROGATIFS = re.compile(r"(?i)^(?:pourquoi|comment|quoi|combien|où|quand|qui|lequel|laquelle|résultat|bilan|verdict)\b")
 PUCE = re.compile(r"^(\s*)(?:[-*+•]\s+(?:\[[ xX]\]\s+)?|(\d{1,2}|[a-hA-H])[.)]\s+|\((\d{1,2}|[a-hA-H])\)\s+)")
-CASE = re.compile(r"^\s*[-*+]\s+\[ \]\s+")
 FIN_PHRASE = re.compile(r"(?<=[.!?…])\s+(?=[«\"“(\[*_`]*[A-ZÀ-ÖØ-Ý0-9])")
 CITATION = re.compile(r"«[^»]*»|“[^”]*”|\"[^\"]*\"|`[^`]*`")
 # Le texte cité n'est jamais lu comme une demande (« Les vraies
@@ -1013,6 +1056,7 @@ def citation_ouverte(s):
     return s.count('«') > s.count('»') or s.count('“') > s.count('”') or s.count('"') % 2 == 1 or s.count('`') % 2 == 1
 
 
+@selon_le_texte('liste')
 def couper_phrases(ligne):
     morceaux, courant = [], ''
     for m in FIN_PHRASE.split(ligne):
@@ -1028,15 +1072,11 @@ def couper_phrases(ligne):
 
 def unites(texte):
     """Découpe le message en unités : (texte affichable, rôle, numéro de bloc, contexte)."""
-    sortie, en_code, section_toi, niveau_toi, annonce_toi, bloc, liste_precedente = [], False, False, 9, False, 0, False
-    item, a_savoir, demande_section, demande_annonce = 0, False, False, False
+    sortie, en_code, bloc, liste_precedente = [], False, 0, False
+    item, a_savoir = 0, False
     for brute in texte.split('\n'):
         ligne = brute.rstrip()
         if ligne.lstrip().startswith('```') or ligne.lstrip().startswith('~~~'):
-            if not en_code and sortie and sortie[-1][1] == 'phrase':
-                # « Colle ceci dans ta session du projet : » puis le bloc : le geste porte sur le bloc qui suit.
-                p_, r_, b_, c_ = sortie[-1]
-                sortie[-1] = (p_, r_, b_, dict(c_, avant_code=True))
             en_code = not en_code
             continue
         if en_code:
@@ -1054,13 +1094,6 @@ def unites(texte):
             continue
         titre = re.match(r"^\s*(#{1,6})\s+(.*)$", ligne)
         if titre:
-            niv = len(titre.group(1))
-            if section_toi and niv <= niveau_toi:
-                section_toi = False
-            if SECTION_POUR_TOI.search(titre.group(2)):
-                section_toi, niveau_toi = True, niv
-                demande_section = bool(SECTION_DEMANDE.search(titre.group(2)))
-            annonce_toi = False
             sortie.append((titre.group(2), 'titre', bloc, {}))
             continue
         if ligne.lstrip().startswith('|') or ligne.lstrip().startswith('>'):
@@ -1068,63 +1101,26 @@ def unites(texte):
             continue
         est_liste = bool(PUCE.match(ligne))
         numero = bool(re.match(r"^\s*(?:\d{1,2}|[a-hA-H])[.)]\s+|^\s*\((?:\d{1,2}|[a-hA-H])\)\s+", ligne))
-        if not est_liste:
-            annonce_toi = False
         liste_precedente = est_liste
         affichable = PUCE.sub('', ligne).strip() if est_liste and not numero else ligne.strip()
-        # Une ligne en gras seule (« **À toi :** ») vaut un titre pour la liste qui suit.
+        # Une ligne en gras seule qui annonce ce qui reste au PM (« **À faire de ton côté** ») est un intitulé, pas une
+        # phrase : sans cela, « de ton côté » la ferait lire comme un feu vert.
         label = re.match(r"^\s*\*\*([^*]+)\*\*\s*:?\s*$", ligne)
         if label and SECTION_POUR_TOI.search(label.group(1)):
-            annonce_toi, demande_annonce = True, bool(SECTION_DEMANDE.search(label.group(1)))
             sortie.append((label.group(1), 'titre', bloc, {}))
             continue
         item += 1
-        ctx = {'liste': est_liste, 'numero': numero, 'case': bool(CASE.match(ligne)), 'item': item,
-               'retrait': len(ligne) - len(ligne.lstrip()),
-               'section_toi': section_toi, 'annonce_toi': annonce_toi and est_liste,
-               'demande_toi': section_toi and demande_section or annonce_toi and est_liste and demande_annonce}
+        ctx = {'liste': est_liste, 'numero': numero, 'item': item, 'retrait': len(ligne) - len(ligne.lstrip())}
         phrases = couper_phrases(affichable)
         for rang, p in enumerate(phrases):
             sortie.append((p, 'phrase', bloc, dict(ctx, tete=rang == 0, seule=len(phrases) == 1)))
-        if not est_liste and affichable.rstrip('*_ ').endswith(':') and (
-                SECTION_POUR_TOI.search(affichable) or PROCEDURE_TOI.match(nu(affichable))
-                or INVITE.match(nu(affichable))):
-            annonce_toi, demande_annonce = True, bool(SECTION_DEMANDE.search(affichable))
     return sortie
 
 
-def demande_a_l_imperatif(n):
-    """Vrai si la phrase demande une réponse à l'impératif (« Choisis… », « Valide… », « Donne le chemin… »), pas à
-    un tiers (« Dis-lui… »)."""
-    verbe = imperatif(n)
-    return verbe in VERBES_DECISION and not re.search(r"(?i)\b" + re.escape(verbe) + r"(?:[- ](?:lui|leur)\b|(?:[- ]le)?\s+(?:vite\s+|aussi\s+)?(?:à|aux|au)\s)", n)
-
-
-def rien_pour_toi(n):
-    """Vrai si la phrase dit que rien n'attend le PM : une proposition ouvre sur la négation et parle d'attente, la
-    phrase nomme le PM, et aucune autre proposition ne s'adresse à lui ni ne parle d'attente."""
-    if EXCEPTION.search(n) or not TOI.search(n):
-        return False
-    vue = False
-    for p in re.split(r"\s*[,;:—–()]\s*|\s+-\s+|(?<=[.!?…])[*_]*\s+", n):
-        p = CONNECTEURS.sub('', p.strip(' .!…*_')).strip()
-        if not p:
-            continue
-        if RIEN_POUR_TOI.match(p) and ATTENTE.search(p):
-            vue = True
-        elif not re.sub(r"[\s.!…,]", '', LOCATIF.sub('', p)) or not (TOI.search(p) or ATTENTE.search(p) or imperatif(p)):
-            continue
-        else:
-            return False
-    return vue
-
-
-def rien_a_faire(texte, generique=False):
+@selon_le_texte(None)
+def rien_a_faire(texte):
     """Vrai si le message dit qu'il n'attend rien du PM, sans condition ni exception, hors du code et des citations :
-    « Rien à faire de ton côté » (la formule d'un PM) ou une formule de fin du glossaire du PM (marqueurs.md).
-    generique : aussi, pour tout PM, une dernière phrase qui dit que rien ne l'attend (« Rien n'est attendu de toi. »),
-    sans « d'autre » ni « sinon » qui laisseraient quelque chose avant. Seulement pour un message où le tri n'a trouvé
-    aucune demande : une tournure libre n'efface jamais une demande (« Valide le devis. Pour le reste, rien… »)."""
+    « Rien à faire de ton côté » (la formule d'un PM) ou une formule de fin du glossaire du PM (marqueurs.md)."""
     t = CITATION.sub('', re.sub(r"(?s)```.*?```|~~~.*?~~~", '', texte or ''))
     phrases = [ph for ligne in t.split('\n') for ph in couper_phrases(ligne.strip())]
     fins = marqueurs()['rien']
@@ -1139,32 +1135,7 @@ def rien_a_faire(texte, generique=False):
             i = n.find(f)
             if i >= 0 and RIEN_SEUL.match(n[i + len(f):]):
                 return True
-    if not generique:
-        return False
-    if partie_a_trancher_vide(texte):
-        return True   # « À trancher : rien. », « ## À trancher / Aucune. » : la session dit qu'elle n'attend rien
-    if not phrases:
-        return False
-    derniere = nu(phrases[-1])
-    return bool(derniere and rien_pour_toi(derniere) and not RIEN_AUTRE.search(derniere) and rien_sans_reserve(derniere)
-                and not CONDITION.match(CONNECTEURS.sub('', derniere).lstrip(' ,')))
-
-
-RIEN_AUTRE = re.compile(r"(?i)\b(?:d['’]autre|de\s+plus|sinon|à\s+part|en\s+dehors|hormis|sauf)\b")
-# « Rien ne t'attend au tableau », « rien n'est attendu de toi sur ce point », « là-dessus » : un rien limité à un lieu
-# ou à un sujet laisse le reste du message ouvert (« il te restera à écrire à un collègue », juste avant).
-RIEN_PORTEE = re.compile(r"(?i)\b(?:au\s+tableau|là[-\s]dessus|sur\s+(?:ce|cet|cette|ces|le|la|les|l['’])\s*\w"
-                         r"|pour\s+(?:ce|cet|cette|ces)\s+\w|pour\s+(?:le|la|les|l['’])\s*(?!instant\b|moment\b)\w"
-                         r"|dans\s+(?:ce|cet|cette|ces|le|la|les|l['’])\s*\w)")
-
-
-def rien_sans_reserve(n):
-    """La proposition qui dit « rien pour toi » ne le limite ni à un lieu ni à un sujet."""
-    for p in re.split(r"\s*[,;:—–()]\s*|\s+-\s+", n):
-        p = CONNECTEURS.sub('', p.strip(' .!…*_')).strip()
-        if RIEN_POUR_TOI.match(p) and ATTENTE.search(p) and RIEN_PORTEE.search(p):
-            return False
-    return True
+    return False
 
 
 # --- le glossaire du PM -------------------------------------------------------------------------------------------
@@ -1182,6 +1153,17 @@ MARQUEURS_RELUS_S = 2.0   # relu au plus toutes les deux secondes : le tri passe
 
 
 def norm_marqueur(s):
+    if isinstance(s, str):
+        return _norm_marqueur(s)
+    return _norm_marqueur_calcule(s)
+
+
+@functools.lru_cache(maxsize=8192)
+def _norm_marqueur(s):
+    return _norm_marqueur_calcule(s)
+
+
+def _norm_marqueur_calcule(s):
     s = unicodedata.normalize('NFKD', str(s or ''))
     s = ''.join(c for c in s if not unicodedata.combining(c)).lower().replace('’', "'")
     return re.sub(r'\s+', ' ', re.sub(r'[*_`«»"]', '', s)).strip()
@@ -1215,12 +1197,20 @@ def marqueurs():
     return out
 
 
+_signature = {'valeur': None, 'sig': ''}
+
+
 def signature_marqueurs():
-    """Une empreinte courte du glossaire du PM ('' sans glossaire), pour savoir quand refaire le tri."""
+    """Une empreinte courte du glossaire du PM ('' sans glossaire), pour savoir quand refaire le tri. Recalculée
+    seulement quand marqueurs() rend un autre glossaire (un nouvel objet à chaque relecture qui change)."""
     m = marqueurs()
-    if not any(m.values()):
-        return ''
-    return hashlib.sha1(json.dumps(m, sort_keys=True, ensure_ascii=False).encode('utf-8')).hexdigest()[:12]
+    if m is _signature['valeur']:
+        return _signature['sig']
+    sig = ''
+    if any(m.values()):
+        sig = hashlib.sha1(json.dumps(m, sort_keys=True, ensure_ascii=False).encode('utf-8')).hexdigest()[:12]
+    _signature.update(valeur=m, sig=sig)
+    return sig
 
 
 def ajouter_marqueur(rubrique, expression):
@@ -1259,62 +1249,33 @@ def marqueur_demande(p):
 
 
 def classer(p, role, ctx):
-    """(priorité, raison) si la phrase attend le PM, sinon (None, raison de l'écart). Un geste (3, 4) n'est gardé que
-    si la session l'attend pour repartir, ou s'il répond à un intitulé qui demande une réponse."""
+    """(priorité, raison) si la phrase attend le PM, sinon (None, raison de l'écart)."""
     cite = sans_citations(p)
     prio, raison = _classer(cite, role, ctx)
     if prio is not None and cite != p and _classer(p, role, ctx)[0] is None:
         # « « Rien à faire de ton côté » contredisait Q12, que je disais en attente de ta réponse » : la citation
         # retirée laissait une demande que la phrase entière n'est pas. Une demande l'est avec et sans la citation.
         return None, 'demande seulement sans sa citation (la phrase entière ne demande rien)'
-    p = cite
-    if prio in (3, 4):
-        n = nu(p)
-        # Un geste qui remet un bloc au PM (« colle ceci dans ta session du projet : » suivi du prompt) est une
-        # demande, même si la session n'attend pas pour repartir (contremaître, 2026-10-26 : le prompt de test du kit
-        # COPIL, terminé par « Rien d'autre à faire de ton côté », ne faisait aucune ligne).
-        if ctx.get('avant_code'):
-            return 4, f'geste avec un bloc à coller ({raison})'
-        # Une case à cocher non cochée est à faire par nature, sans marque d'un PM ni formule de fin (plugin pilote,
-        # 2026-10-28 : « coche ce qui est validé : - [ ] … » ne faisait plus de ligne une fois le message lu).
-        if ctx.get('case'):
-            return 4, f'case à cocher ({raison})'
-        if not (ctx.get('demande_toi') or REPART.search(n) or demande_a_l_imperatif(n)):
-            return None, f"geste que la session n'attend pas pour repartir ({raison})"
     return prio, raison
 
 
 def _classer(p, role, ctx):
     if role != 'phrase':
         return None, role
-    n = nu(NIE_TOI.sub('', p))
+    n = nu(p)
     if not n:
-        return None, 'vide' if not nu(p) else 'négation (pas au PM)'
+        return None, 'vide'
     question = termine_par_question(p)
     feu = FEU.search(n)
     if ctx.get('a_savoir'):
         return None, 'section « À savoir » (information)'
-    if section_vide(p):
-        return None, 'la partie se dit vide (« Aucune. », « rien pour l\'instant »)'
     if NEGATION.search(n) and not question:
         return None, 'négation (rien à faire)'
-    if rien_pour_toi(n) and not question:
-        return None, 'rien n\'attend le PM (« rien n\'est en attente de ta part »)'
-    if (PARLE_DE_DEMANDE.match(CONNECTEURS.sub('', n)) and not question and not re.search(DEUXIEME, n, re.I)
-            and not (ctx.get('section_toi') or ctx.get('annonce_toi'))):
-        # Dans une section « pour toi », « La ligne 🌱 devient deux lignes : » est un changement proposé (une ligne de slide).
-        return None, 'parle d\'une demande ou d\'une ligne, sans s\'adresser au PM'
-    if CLOSE.search(n) and SUJET_QUESTION.search(n) and not question and not re.search(DEUXIEME, n, re.I):
-        return None, 'question déjà close (« soldée », « sans objet », « au tableau »)'
     if RAPPORT.match(n) and not question and not re.search(DEUXIEME, n, re.I):
         # « J'ai ajouté une règle (à valider par Léo) » : un compte rendu, même s'il cite une validation.
         return None, 'compte rendu (première personne)'
     if CONDITION.match(CONNECTEURS.sub('', n).lstrip(' ,')) and not question and not feu:
         return None, 'geste conditionnel (« si… », « quand tu… »)'
-    if A_VENIR.search(n) and not question:
-        return None, 'demande annoncée pour plus tard (« te demandera… »)'
-    if FACULTATIF.search(n) and not question and not TYPE_GO.search(n):
-        return None, 'facultatif (« tu peux », « si tu veux »)'
     if feu:
         return 1, f'feu vert / décision : « {feu.group(0).strip()} »'
     marque = marqueur_demande(p)
@@ -1326,39 +1287,35 @@ def _classer(p, role, ctx):
         if len(mots) <= 2 and INTERROGATIFS.match(n):
             return None, 'question-titre (rhétorique)'
         return 2, 'question'
-    if RAPPORT.match(n):
-        return None, 'compte rendu (première personne)'
-    if ctx.get('case'):
-        return 4, 'case à cocher'
-    if MESSAGE_A_ENVOYER.match(n):
-        return 4, 'geste (message à transmettre, annoncé)'
-    verbe = imperatif(n)
-    if verbe:
-        return 4, f'geste (impératif « {verbe} »)'
-    if INVITE.match(n):
-        return 4, 'geste (« tu peux », « merci de »…)'
-    inf = A_INFINITIF.search(n)
-    if inf:
-        return 4, f'geste (« {inf.group(0).strip()} »)'
-    if ctx.get('section_toi') or ctx.get('annonce_toi'):
-        if n.endswith(':') and (not ctx.get('liste') or len(n.split()) <= 4):
-            return None, 'annonce (ses éléments sont jugés à part)'
-        if not ctx.get('tete'):
-            return None, "explication d'un élément « pour toi » (seule sa tête compte)"
-        if re.match(r"(?i)^(?:je|j['’]|on\s+va|nous)\b", n):
-            return None, 'plan de Claude (première personne) dans une section « pour toi »'
-        return 3, 'élément de la section / liste « pour toi »'
-    if PROPOSE.search(n):
-        return 5, 'proposition ou recommandation (attend un oui)'
     return None, 'information ou compte rendu'
 
 
+# The sort of a message depends only on its text and the PM's glossary: kept by (text, glossary), cleared when the
+# glossary changes. A reading of the board sorted the same messages again each time (1.5 s, 2026-11-23).
+_tris = {'gl': None, 'res': {}}
+TRIS_MAX = 4000
+
+
 def trier(texte, expliquer=False):
+    if expliquer:
+        return _trier(texte, True)
+    gl = signature_marqueurs()
+    if _tris['gl'] != gl or len(_tris['res']) > TRIS_MAX:
+        _tris.update(gl=gl, res={})
+    cle = texte or ''
+    r = _tris['res'].get(cle)
+    if r is None:
+        r = _tris['res'][cle] = _trier(texte)
+    lignes, reste, tete, prio = r
+    return list(lignes), reste, tete, prio
+
+
+def _trier(texte, expliquer=False):
     us = unites(texte or '')
     notes, rien = [], rien_a_faire(texte)
     for k, (p, role, bloc, ctx) in enumerate(us):
         prio, raison = classer(p, role, ctx)
-        if rien and prio is not None and not ctx.get('avant_code'):
+        if rien and prio is not None:
             prio, raison = None, f'« Rien à faire de ton côté » dans le message ({raison})'
         notes.append({'k': k, 'p': p, 'prio': prio, 'raison': raison, 'bloc': bloc, 'ctx': ctx, 'role': role})
     # Options : une liste qui suit immédiatement une question ou une annonce gardée la rejoint, si chaque
@@ -1385,16 +1342,6 @@ def trier(texte, expliquer=False):
     for i, n in enumerate(notes):
         mots = nu(n['p']).split()
         renvoie = (len(mots) <= 4 and ANAPHORE.search(' '.join(mots))) or ANAPHORE.search(' '.join(mots[:3]))
-        seule_ligne = n['ctx'].get('seule') and not n['ctx'].get('liste')
-        if n['prio'] == 2 and len(mots) <= 4 and renvoie and seule_ligne:
-            # « Je l'applique ? » seul dans son paragraphe : il renvoie à la proposition qui précède.
-            for avant in reversed(notes[:i]):
-                if avant['role'] == 'phrase' and PROPOSE.search(nu(avant['p'])):
-                    n['avant'], avant['prio'] = avant['p'], None
-                    avant['raison'] = f'proposition rattachée à la ligne {i + 1}'
-                    break
-            if n.get('avant'):
-                continue
         if (n['prio'] in (1, 2) and nu(n['p']).endswith(':') and len(mots) <= 8 and i > 0
                 and not n['ctx'].get('tete') and not n.get('options')):
             # « J'attends ton « go » : » : ce qui est attendu est dit juste avant, dans la même ligne.
@@ -1411,13 +1358,12 @@ def trier(texte, expliquer=False):
                         PROPOSE.search(nu(o['p'])) or re.match(r"(?i)^je\s+peux\b", nu(o['p']))):
                     avant = o
                     break
-            if (avant['role'] == 'phrase' and (avant['prio'] is None or avant['prio'] >= 3)
+            if (avant['role'] == 'phrase' and avant['prio'] is None
                     and (avant['ctx'].get('item') == n['ctx'].get('item') or len(mots) <= 4 and avant['bloc'] == n['bloc'])):
                 n['avant'] = avant['p']
                 avant['prio'], avant['raison'] = None, f'antécédent rattaché à la ligne {i + 1}'
-    # Demandes (1, 2) : les dernières d'abord, c'est là que Claude les met. Gestes et listes (3, 4) : dans l'ordre.
-    gardees = sorted((n for n in notes if n['prio'] is not None),
-                     key=lambda n: (n['prio'], -n['k'] if n['prio'] <= 2 else n['k']))
+    # Demandes (1, 2) : les dernières d'abord, c'est là que Claude les met.
+    gardees = sorted((n for n in notes if n['prio'] is not None), key=lambda n: (n['prio'], -n['k']))
     retenues = sorted(gardees[:LIGNES_MAX], key=lambda n: n['k'])
     for n in gardees[LIGNES_MAX:]:
         n['raison'] += ' (hors des trois)'
@@ -1461,6 +1407,7 @@ SOURCES = re.compile(r"(?:sources?|références?|liens?|pour\s+aller\s+plus\s+lo
 LIEN_SEUL = re.compile(r"^[-*+•\s]*\[[^\]]+\]\([^)\s]+\)[\s.,;]*$")
 
 
+@selon_le_texte(None)
 def debut_section(ligne):
     """'trancher', 'savoir', 'ensuite', 'ouvert', 'rien' ou 'sources' si la ligne ouvre une de ces parties, sinon None.
     Les intitulés « à trancher » du glossaire du PM comptent aussi."""
@@ -1493,6 +1440,61 @@ def couper(t, n=LIBELLE_MAX):
     return t.replace('`', '') if t.count('`') % 2 else t
 
 
+# A title is never cut mid-sentence with « … » (PM, 2026-11-19): it ends where the sentence breaks naturally (a comma,
+# a colon, a dash, an aside in parentheses that closes before a punctuation mark, a full stop), else on a whole word that is not a linking word. What the title does
+# not say stays in the unfold.
+COUPURE_NATURELLE = re.compile(r"[,;:–—]\s|\s[–—-]\s|\s\((?=[^()]*\)\s*(?:[:,;.–—]|$))|[.!?]\s")
+TITRE_PLANCHER = 25
+MOTS_DE_LIAISON = frozenset("""de du des d la le les l un une à au aux et ou dans en sur pour avec par que qui ne pas ce cette
+    ses son sa ton ta tes puis sans sous vers chez entre dont où si car mais donc or ni avant après quand lorsque""".split())
+
+
+def tete_propre(tete):
+    """False when a head would end inside a parenthesis, a guillemet pair, a code span, a command or a path."""
+    mots = tete.split()
+    return bool(mots) and tete.count('(') == tete.count(')') and tete.count('«') == tete.count('»') \
+        and tete.count('`') % 2 == 0 and not re.search(r'[/`\\]|^\S+\.\w{1,4}$', mots[-1])
+
+
+def coupe_nette(texte, n, premier=False):
+    """The text if it fits in n characters; else its head up to a natural break, with no « … »: the first break at 25
+    characters or more (`premier`, a short title) or the last one that fits; none, whole words only, never ending on a
+    linking word."""
+    t = ' '.join(str(texte or '').split())
+    if len(t) <= n:
+        return t
+    tetes = [t[:m.start()] for m in COUPURE_NATURELLE.finditer(t[:n + 1]) if m.start() >= TITRE_PLANCHER]
+    tetes = [h for h in tetes if tete_propre(h)]
+    if tetes:
+        return (tetes[0] if premier else tetes[-1]).rstrip(' ,;:–—-')
+    mots = t[:n + 1].split(' ')[:-1]
+    while mots and (not tete_propre(' '.join(mots)) or mots[-1].lower().rstrip("’'") in MOTS_DE_LIAISON
+                    or mots[-1].lower().endswith(("'", '’'))):
+        mots.pop()
+    return ' '.join(mots).rstrip(' ,;:(«–—-') or t[:n].rstrip()
+
+
+def interrogation_sans_separateur(corps):
+    """The first « ? » of a question's text that is followed by more text with no « : » before it nor right after
+    it (« Faut-il garder le devis ? Il est signé. »), else None. « Titre ? : question » and « Titre : question ? »
+    have their separator."""
+    q = re.search(r"\?\s+(?![\s*_]*(?:\([^()]{0,40}\)\s*)?:|\d{1,2}[.)]\s)(?=\S)", corps)
+    if q and ':' not in corps[:q.start()]:
+        return q
+    return None
+
+
+def separateur_manquant(ligne):
+    """True when a line « Qn · … » has no « : » between its title and its question (measured 2026-11-20 to 25: 36
+    of 441 questions, titles of 100 characters and more on Mon Studio's lines)."""
+    m = QUESTION_TITREE.match(str(ligne or '').strip())
+    if not m:
+        return False
+    corps = m.group(2).strip().lstrip('*')
+    masque = ETIQUETTE_TITRE.sub(lambda e: '_' * len(e.group(0)), corps)
+    return interrogation_sans_separateur(masque) is not None
+
+
 def question_titree(m):
     """{num, titre, suite} d'une ligne « Qn · Titre : question » (m : QUESTION_TITREE). Le titre s'arrête au gras
     fermant, à « : », ou au premier point."""
@@ -1502,7 +1504,12 @@ def question_titree(m):
     # « (impact fort : échéance) » belongs to the title (rule 10): its colon does not end it.
     masque = ETIQUETTE_TITRE.sub(lambda e: '_' * len(e.group(0)), corps)
     fin = re.search(r"\*\*|\s:\s|:\s|\.\s|\s[–—]\s", masque)
-    titre, suite = (corps[:fin.start()], corps[fin.end():]) if fin and fin.start() <= 90 else (corps, '')
+    # « Qn · Titre ? question » with no « : »: the title stops at the first « ? » (kept), the rest is the question.
+    sans_deux_points = interrogation_sans_separateur(masque)
+    if sans_deux_points and sans_deux_points.start() <= 90 and not (fin and fin.start() < sans_deux_points.start()):
+        titre, suite = corps[:sans_deux_points.start() + 1], corps[sans_deux_points.end():]
+    else:
+        titre, suite = (corps[:fin.start()], corps[fin.end():]) if fin and fin.start() <= 90 else (corps, '')
     titre = nettoyer(titre).rstrip(' .:*')
     suite = nettoyer(suite.lstrip('*: ')).lstrip(': ')
     return {'num': int(m.group(1)), 'titre': f"Q{m.group(1)} · {titre}", 'suite': suite}
@@ -1515,15 +1522,6 @@ def gras_seul(ligne):
     """Vrai pour une ligne en gras seule (« **Pourquoi** »), qui ouvre une partie ; pas pour une question titrée en
     gras seule sur sa ligne (« **Q3 · Skill lançable par Claude** »), dont les options suivent."""
     return bool(re.match(r"^\s*\*\*[^*]+\*\*\s*:?\s*$", ligne)) and not QUESTION_TITREE.match(ligne.strip())
-
-
-# Une partie « À trancher » qui dit qu'elle est vide (« Aucune. », « rien pour l'instant », « None. ») : pas une question.
-# Sans cette garde, une session qui suit le rappel de Mon Studio en écrivant « À trancher : rien. » faisait une ligne
-# « Répondre » fantôme, même lue (relecture adverse du 2026-10-29).
-SECTION_VIDE = re.compile(r"^(?:aucune?|rien|neant|none|nothing|no|pas de)"
-                          r"(?:\s+(?:questions?|decisions?|demandes?|points?|open questions?|nouvelle))?"
-                          r"(?:\s+(?:pour l'instant|pour le moment|a ce stade|pour toi|de ton cote|aujourd'hui|ici|encore"
-                          r"|for now|at this stage|from you|on your side))*$")
 
 
 def apres_intitule(ligne):
@@ -1542,52 +1540,7 @@ def apres_intitule(ligne):
     return ligne
 
 
-def section_vide(ligne):
-    """Vrai si la ligne dit seulement que la partie est vide, avant un éventuel « : explication » qui ne s'adresse pas
-    au PM (« Rien pour l'instant : je continue. » ; pas « Rien : valide le devis. »). Un intitulé « À trancher » en
-    tête de ligne est retiré d'abord (« À trancher : rien. »)."""
-    if debut_section(ligne) == 'trancher':
-        ligne = apres_intitule(ligne)
-    n = norm_marqueur(re.sub(r"^\s*(?:[-*+•]\s+|\d{1,2}[.)]\s+)", '', ligne))
-    avant, sep, apres = n.partition(':')
-    if sep and (re.search(DEUXIEME, apres, re.I) or imperatif(apres.strip())):
-        return False
-    avant = avant.strip(' .!…')
-    return bool(avant) and not avant.endswith('?') and bool(SECTION_VIDE.match(avant))
-
-
-def partie_a_trancher_vide(texte):
-    """Vrai si le message a une partie « À trancher » dont tout le contenu dit qu'elle est vide (« Aucune. »,
-    « rien pour l'instant »), hors code, tableaux, citations et liens seuls ; faux dès qu'une autre ligne s'y trouve."""
-    dedans, vide, en_code = False, False, False
-    for brute in (texte or '').split('\n'):
-        ligne = brute.rstrip()
-        if ligne.lstrip().startswith(('```', '~~~')):
-            en_code = not en_code
-            continue
-        if en_code or not ligne.strip():
-            continue
-        section = debut_section(ligne)
-        if section:
-            dedans = section == 'trancher'
-            reste = apres_intitule(ligne) if dedans else ''
-            if reste.strip():
-                if section_vide(reste):
-                    vide = True
-                else:
-                    return False
-            continue
-        if re.match(r"^\s*#{1,6}\s", ligne) or gras_seul(ligne):
-            dedans = False
-            continue
-        if dedans and not (ligne.lstrip().startswith(('|', '>')) or LIEN_SEUL.match(ligne)):
-            if section_vide(ligne):
-                vide = True
-            else:
-                return False
-    return vide
-
-
+@selon_le_texte()
 def a_trancher(texte):
     """([{num, titre, suite}], [numéros encore ouverts]) : les questions de la partie « À trancher »."""
     items, ouverts, dedans, en_code = [], [], False, False
@@ -1621,12 +1574,12 @@ def a_trancher(texte):
             continue
         m = QUESTION_TITREE.match(ligne.strip())
         if m:
-            items.append(dict(question_titree(m), brut=ligne.strip()))
+            items.append(dict(question_titree(m), brut=ligne.strip(), ligne=ligne.strip()))
         elif items and items[-1].get('num'):
             # Sous une question numérotée, tout complète la question, ses options en liste comprises.
             items[-1]['suite'] = (items[-1]['suite'] + ' ' + nettoyer(ligne)).strip()
             items[-1]['brut'] += ' ' + ligne.strip()   # its list markers kept: its numbered options (options_libelles)
-        elif not section_vide(ligne):
+        else:
             items.append({'num': None, 'titre': '', 'suite': nettoyer(ligne)})
     if any(it['num'] for it in items):
         # Partie numérotée (format du PM) : une ligne sans numéro avant la première question n'en est pas une.
@@ -1761,6 +1714,7 @@ def questions_anciennes(chemin, nums):
     return {n: q for n, q in trouvees.items() if int(n) in nums}
 
 
+@selon_le_texte()
 def encore_ouvert(texte):
     """{numéro: ce que dit sa parenthèse} sur la ligne « Encore ouvert » d'un message : « Encore ouvert : Q4 (l'entrée
     product-kits dans claude-plugins, que tu valides avec le référent). » donne {4: "l'entrée … avec le référent"}. Un titre
@@ -1790,6 +1744,7 @@ SEGMENT_RAPPEL = re.compile(r"\bQ(\d{1,3})\b\s*(?:\(([^()]+)\)|([·•:–])\s*)
 SUJET_DIT = re.compile(r"(?i)^(?:pour|sur|concernant|à\s+propos\s+d|au\s+sujet\s+d)")
 
 
+@selon_le_texte()
 def rappels_en_phrase(texte):
     """{numéro: {dit, phrase}} : les questions numérotées qu'une phrase du message rappelle comme attendant le PM, hors
     de « Encore ouvert » (RAPPEL_EN_PHRASE), dans la phrase même ou dans la liste qu'elle annonce (« … déjà posées plus
@@ -1802,6 +1757,12 @@ def rappels_en_phrase(texte):
         return sortie
     for p, role, _, ctx in unites(texte or ''):
         if role != 'phrase' or ctx.get('a_savoir'):
+            annonce = None
+            continue
+        # Une phrase qui porte le lien d'une session (2026-11-25 : « [Cockpit · réparer la détection continue des
+        # conflits](#local_…) attend toujours tes réponses à ses questions Q40 à Q43 ») relaie les questions de
+        # cette autre session, qui a ses propres lignes : ce ne sont pas celles de la session qui l'écrit.
+        if LIEN_SESSION.search(p):
             annonce = None
             continue
         n = nu(p)
@@ -2129,7 +2090,7 @@ def type_demande(texte, prio=None):
     verbe = imperatif(n) or imperatif(re.sub(r"(?i)^[^:]{0,60}:\s*", '', n))
     if verbe in VERBES_DECISION:
         return 'decision'
-    if verbe or prio == 4 or INVITE.match(n) or A_INFINITIF.search(n):
+    if verbe or INVITE.match(n) or A_INFINITIF.search(n):
         return 'task'
     return 'decision'
 
@@ -2138,6 +2099,17 @@ def type_demande(texte, prio=None):
 
 def nom_projet(cwd):
     """Le nom du dossier, allégé : « Studio - Projet Alpha » et « Studio-Projet-Alpha » deviennent « Projet Alpha »."""
+    if isinstance(cwd, str):
+        return _nom_projet(cwd, str(HOME))
+    return _nom_projet_calcule(cwd)
+
+
+@functools.lru_cache(maxsize=4096)
+def _nom_projet(cwd, home):   # pure on (folder, home folder): asked tens of thousands of times per reading
+    return _nom_projet_calcule(cwd)
+
+
+def _nom_projet_calcule(cwd):
     if not cwd or os.path.normpath(cwd) == str(HOME):
         return '~ (dossier personnel)'
     chemin = os.path.normpath(cwd)
@@ -2346,37 +2318,11 @@ def construire(jours, silence, maintenant, cache):
             # Pastilles illisibles : une réponse de Claude arrivée après le dernier passage du PM dans la session.
             s['non_lue'], s['a_la_main'] = r['etat'] == 'attend' and r['depuis'] > m['focus'] > 0, False
         if s['etat'] == 'attend':
-            s['lignes'], s['reste'], s['tete'], s['prio'] = trier(s.get('texte', ''))
+            _, _, s['tete'], s['prio'] = trier(s.get('texte', ''))
         else:
-            s['lignes'], s['reste'], s['tete'], s['prio'] = [], 0, '', None
+            s['tete'], s['prio'] = '', None
         sessions.append(s)
-    # En haut : ce qui porte une pastille de couleur dans la barre (non lu, Claude travaille, session bloquée).
-    couleur = [s for s in sessions if s['non_lue'] or s['etat'] in ('travaille', 'suspens', 'erreur')]
-    # En dessous : déjà lu, mais le dernier message de Claude attend encore quelque chose, dans la fenêtre.
-    # Seulement si une action du PM est attendue (une recommandation seule ne suffit pas) et qu'il n'a pas répondu.
-    grises = [s for s in sessions if s not in couleur and s['etat'] == 'attend' and s['prio'] in (1, 2, 3, 4)
-              and maintenant - s['derniere'] <= jours * 86400]
-    recence = {}
-    for s in sessions:
-        p = nom_projet(s['cwd'])
-        recence[p] = max(recence.get(p, 0), s['derniere'])
-    # Un bloc par Studio : d'abord ceux qui ont une pastille de couleur, puis les autres, les plus récents en tête.
-    blocs = {}
-    for s in couleur + grises:
-        b = blocs.setdefault(nom_projet(s['cwd']), {'projet': nom_projet(s['cwd']), 'couleur': [], 'grises': []})
-        b['couleur' if s in couleur else 'grises'].append(s)
-    for b in blocs.values():
-        b['couleur'].sort(key=lambda s: -s['derniere'])
-        b['grises'].sort(key=lambda s: -s['derniere'])
-    studios = sorted(blocs.values(), key=lambda b: (not b['couleur'], -recence[b['projet']]))
-    silencieux = []
-    for p, t in recence.items():
-        if maintenant - t > silence * 86400:
-            der = max((s for s in sessions if nom_projet(s['cwd']) == p), key=lambda s: s['derniere'])
-            silencieux.append({'projet': p, 'depuis': t, 'session': der})
-    silencieux.sort(key=lambda p: -p['depuis'])
     e = {'genere': maintenant, 'jours': jours, 'silence': silence, 'pastilles_lues': lues is not None,
-         'couleur': couleur, 'grises': grises, 'studios': studios, 'silencieux': silencieux,
          'automates': automates(taches_planifiees(), metas, index, cache, maintenant),
          'lecture_app': lecture_app(metas, index)}
     # Les demandes fraîches, et à part les anciennes : rien ne sort de Mon Studio pour son âge.
@@ -2562,6 +2508,10 @@ def sans_reponse(e, maintenant=None):
         projet = c.get('chantier') or nom_projet(dossier)
         lignes = [l for l in e.get('tableau') or [] if unicodedata.normalize('NFC', l.get('projet') or '') == unicodedata.normalize('NFC', dossier)]
         for x in sans_doublon_du_tableau(attentes_de_tiers(journal_du_miroir(c), maintenant), lignes):
+            # A wait whose session is archived is no wait any more (PM, 2026-11-20: « Ouvrir » led to an archived session
+            # for the PM's own to-do, logged as « blocked »): it leaves with its session.
+            if (par_id.get(x['sessionId']) or {}).get('archivee'):
+                continue
             if jours_ouvres_entre(x['depuis'], maintenant) >= SANS_REPONSE_JOURS_OUVRES:
                 sortie.append({'cle': x['cle'], 'titre': x['texte'], 'qui': '', 'projet': projet,
                                'session': x['sessionId'], 'depuis': int(x['depuis'] * 1000)})
@@ -2741,13 +2691,32 @@ def rapport_controle(releve, jours, maintenant):
 # du chantier ne donne de ligne que pour ce que le tableau ne porte pas encore (le contremaître la remplace
 # par la sienne dès qu'il l'a reprise).
 
+_journaux_lus = {}   # {journal: ((mtime, taille), (docs, sans_doc))}: a journal is read again only when it changes
+
+
 def soldees_au_journal(chemin):
     """Ce que le journal local d'un chantier (<chantier>.journal.jsonl, question.py settle) dit soldé : les documents
     soldés, et pour une ligne écrite sans document, (session, titre, heure du solde). Dans l'ordre du journal : une
     question réglée par la source puis rouverte par le PM (`reopened`, question.py) n'est plus soldée."""
+    journal = pathlib.Path(chemin).with_suffix('.journal.jsonl')
+    try:
+        st = os.stat(journal)
+        cle = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        cle = None
+    gardee = _journaux_lus.get(str(journal))
+    if cle is not None and gardee is not None and gardee[0] == cle:
+        return set(gardee[1][0]), list(gardee[1][1])
+    docs, sans_doc = _soldees_au_journal(journal)
+    if cle is not None:
+        _journaux_lus[str(journal)] = (cle, (set(docs), list(sans_doc)))
+    return docs, sans_doc
+
+
+def _soldees_au_journal(journal):
     docs, sans_doc = set(), []
     try:
-        with open(pathlib.Path(chemin).with_suffix('.journal.jsonl'), encoding='utf-8') as f:
+        with open(journal, encoding='utf-8') as f:
             for ligne in f:
                 if '"settled"' not in ligne and '"reopened"' not in ligne:
                     continue
@@ -2831,9 +2800,12 @@ def chantiers_actifs(metas):
     return [c for c in miroirs() if not miroir_cache(c, par_id.get(c.get('sessionId')))]
 
 
+_normpath = functools.lru_cache(maxsize=8192)(os.path.normpath)   # pure; the board asks it tens of thousands of times
+
+
 def dans_un_dossier(cwd, dossiers):
     """Vrai si le dossier de la session est l'un de ces dossiers, ou un de leurs sous-dossiers."""
-    d = os.path.normpath(cwd) if cwd else ''
+    d = (_normpath(cwd) if isinstance(cwd, str) else os.path.normpath(cwd)) if cwd else ''
     return bool(d) and any(d == x or d.startswith(x + os.sep) for x in dossiers)
 
 
@@ -2870,9 +2842,25 @@ def est_un_studio(d, instantane=None):
     return d in connus or unicodedata.normalize('NFC', d) in connus
 
 
+# The walk under a chantier's folder (os.walk, four levels) cost near 2 s per board reading for the same few folders
+# (2026-11-23): its answer is kept STUDIOS_DEDANS_S per folder. A Studio created inside another one shows within that.
+STUDIOS_DEDANS_S = 120
+_studios_dedans = {}
+
+
 def contient_d_autres_studios(d):
     """True when a Studio mark sits in a subfolder of `d` (to PROFONDEUR_STUDIOS levels): the folder groups Studios,
-    it is not one. Hidden folders and dependency folders are not entered; a refused folder is not entered either."""
+    it is not one. Hidden folders and dependency folders are not entered; a refused folder is not entered either.
+    The answer is kept STUDIOS_DEDANS_S seconds per folder (real time, never the computation's `maintenant`)."""
+    gardee = _studios_dedans.get(d)
+    if gardee is not None and 0 <= time.monotonic() - gardee[0] < STUDIOS_DEDANS_S:
+        return gardee[1]
+    r = _contient_d_autres_studios(d)
+    _studios_dedans[d] = (time.monotonic(), r)
+    return r
+
+
+def _contient_d_autres_studios(d):
     base = d.rstrip(os.sep).count(os.sep)
     for racine, noms, _ in os.walk(d):
         niveau = racine.rstrip(os.sep).count(os.sep) - base
@@ -3018,7 +3006,7 @@ def ouvertes_dans(texte):
     citees = set()
     if REF_QUESTION.search(texte or ''):
         _, _, notes, _ = trier(texte, expliquer=True)
-        citees = {int(x) for nt in notes if nt['prio'] in (1, 2, 3, 4) for x in REF_QUESTION.findall(nt['p'])} - nums
+        citees = {int(x) for nt in notes if nt['prio'] in (1, 2) for x in REF_QUESTION.findall(nt['p'])} - nums
     return nums, citees, sans_numero
 
 
@@ -3418,6 +3406,7 @@ def avant_encore_ouvert(texte, n=2):
     return couper(' '.join(' '.join(b) for b in (avant or apres)[-n:]), CONTEXTE_MAX)
 
 
+@selon_le_texte(None)
 def question_introuvable(texte):
     """Le détail d'une question rappelée qu'aucun paragraphe ni menu du transcript ne pose (2026-10-16 : le détail ne
     doit jamais être vide, ni répéter le titre) : annoncé comme tel, avec la fin du dernier message de la session."""
@@ -3702,20 +3691,6 @@ def _demandes(s):
             lignes[-1]['detail'] = q['detail']
     for l in lignes:
         l['type'] = type_demande(l['titre'] + ' ' + l['suite'])
-    # Un rappel sans numéro (« Encore ouvert : l'étape 3, en attente de ta réponse dans l'encadré », 2026-10-16) : la
-    # question de la dernière boîte restée sans réponse (encadre_ouvert), comme une ligne de menu en attente ; sans
-    # boîte, la phrase de repli quand le tri aurait gardé le rappel. Jamais la phrase du rappel comme question. Dans un
-    # message qui porte lui-même des questions numérotées, le rappel renvoie à elles : pas de ligne de repli à part
-    # (contrôle des lignes du 2026-10-20).
-    if rappel_sans_numero(texte):
-        boite = s.get('encadre')
-        m = QUESTION_TITREE.match(boite['menu'][0]['question']) if boite else None
-        if boite and not (m and int(m.group(1)) in vus):
-            lignes.append(ligne_menu(boite['menu'], boite.get('depuis') or s['depuis']))
-        elif not boite and not any(l['num'] for l in lignes) and debut_section(s.get('tete') or '') == 'ouvert':
-            lignes.append({'titre': '', 'suite': QUESTION_SANS_TEXTE, 'detail': question_introuvable(texte),
-                           'depuis': s['depuis'], 'num': None, 'type': type_demande(QUESTION_SANS_TEXTE),
-                           'lecture': 'introuvable'})
     # Un message hors format dont seule une phrase rappelle des questions : sa phrase d'action la plus forte garde sa
     # ligne si ce n'est pas ce rappel (« Colle le script pour que je continue », ou « Il reste à toi : » devant une
     # liste où une autre demande côtoie les numéros).
@@ -3723,9 +3698,8 @@ def _demandes(s):
     # rappelés dans une phrase seulement : une autre demande du message garde sa ligne « Vérifier » plus bas.
     if lignes and not all(l.get('rappel_phrase') for l in lignes) or toutes_faites and not lignes:
         return sorted(lignes, key=lambda l: l.get('num') or 0)
-    # « Rien à faire de ton côté » (format du PM, dans toutes ses sessions) : hors questions numérotées et hors geste
-    # avec un bloc à coller (que le tri garde malgré la formule), aucune ligne.
-    if rien_a_faire(texte, generique=True) and s.get('prio') is None:
+    # « Rien à faire de ton côté » (format du PM, dans toutes ses sessions) : hors questions numérotées, aucune ligne.
+    if rien_a_faire(texte) and s.get('prio') is None:
         return sorted(lignes, key=lambda l: l.get('num') or 0)
     # Un fil 📬 reçoit des nouvelles (des comptes rendus) : seule une question « À trancher » y fait une ligne.
     if (s.get('titre') or '').lstrip().startswith('📬'):
@@ -3738,11 +3712,11 @@ def _demandes(s):
     # aux sessions de finir par leurs questions numérotées ou par « Rien à faire de ton côté ».
     tete = nettoyer(s.get('tete') or '')
     rappel = any(r['source'] and r['source'] in tete for r in en_phrase.values())
-    proche = s.get('tete') if (s.get('prio') in (1, 2, 3, 4, 5) and tete and not rappel) else ''
+    proche = s.get('tete') if (s.get('prio') in (1, 2) and tete and not rappel) else ''
     # A sentence that waits for nothing (PM, 2026-11-18: « L'inventaire des ateliers est rendu… », « … est chez
     # <session>, qui travaille ») is information: no line. Kept as soon as it asks the PM anything (demande_au_pm); a
-    # question (2), a gesture (4: a box to tick, an imperative) or a proposal (5) always keeps it.
-    if proche and s.get('prio') in (1, 3) and not demande_au_pm(proche):
+    # question (2) always keeps it.
+    if proche and s.get('prio') == 1 and not demande_au_pm(proche):
         proche = ''
     if proche:
         # Le titre est la phrase, mot pour mot ; le détail porte aussi le bloc auquel elle renvoie (detail_de_phrase).
@@ -3852,6 +3826,25 @@ def rubriques(texte):
     return sortie, (texte[:marques[0].start()].rstrip(' :;,·—-') if marques else texte)
 
 
+# The document a question asks the PM to read (PM, Q1 du 2026-11-17, confirmed 2026-11-25): the link written after
+# « Pièce : », else the first link to a document the PM opens (artifact, Google Docs or Drive, Notion, wiki). Read, never
+# guessed: a link of another kind (a site, a ticket) is not offered as the piece.
+LIEN_PIECE = re.compile(r"https://[^\s<>\"'`«»\])]+", re.I)
+HOTES_DOCUMENT = re.compile(r"^https://(?:claude\.ai/(?:code/)?artifact/|(?:docs|drive|sheets|slides)\.google\.com/|"
+                            r"(?:www\.)?notion\.(?:so|site)/|[\w-]+\.atlassian\.net/wiki/)", re.I)
+
+
+def piece_citee(texte, rubrique=''):
+    """The link of the document to read in a question: the first link after « Pièce : », else the first link to a
+    document in the text (HOTES_DOCUMENT); '' when it writes none."""
+    for source, tous in ((rubrique, True), (texte, False)):
+        for m in LIEN_PIECE.finditer(str(source or '')):
+            lien = m.group(0).rstrip('.,;:!?*_')
+            if tous or HOTES_DOCUMENT.match(lien):
+                return lien
+    return ''
+
+
 def depli_de_question(titre, suite, brut='', dossier=''):
     """{enonce, options: [{libelle, recommande}], recommande, pourquoi, attendu, sinon, fichiers} of a numbered
     question: the statement before its numbered options and its labelled rubrics, whole, without « (recommandé) »; the
@@ -3891,9 +3884,11 @@ def depli_de_question(titre, suite, brut='', dossier=''):
     question = question.strip(' :·—-')
     return {'enonce': enonce, 'question': question, 'options': options, 'recommande': reco,
             'pourquoi': parts.get('pourquoi', ''), 'attendu': parts.get('attendu', ''), 'sinon': parts.get('sinon', ''),
-            'fichiers': fichiers_cites(f"{brut or ''} {complet}", dossier)}
+            'fichiers': fichiers_cites(f"{brut or ''} {complet}", dossier),
+            'piece': piece_citee(f"{brut or ''} {complet}", parts.get('piece', ''))}
 
 
+@selon_le_texte()
 def phrases_du_message(texte):
     """[(sentence, list items that follow it)] of a message, in order, outside code blocks, tables and titles, without
     markdown decoration. A sentence that ends a block with « : » carries the items of the list right after it."""
@@ -4039,6 +4034,7 @@ A_CONFIRMER_TEXTE = ("Tu as écrit à la session après la question et elle s'es
 RANG_A_CONFIRMER = 5   # une ligne « à confirmer » passe sous les lignes ouvertes de son Studio, comme au tableau
 RANG_PROCHE, RANG_ATTEND, RANG_OUVERTE = 0, 1, 2
 ATTEND_DEVANT_S = 86400   # « une session attend » puts a line in front for 24 h after it appeared
+PRENOM_ATTEND_S = 7 * 86400   # « Prénom attend » keeps a request « fort » for 7 days after it appeared (PM, Q5, 2026-11-25)
 
 
 # Impact and effort (PM, 2026-11-17: « ce qui est très impactant et très peu coûteux en premier »). Each line of the
@@ -4052,6 +4048,9 @@ RAISONS = ('client attend', 'échéance', "bloque l'équipe", 'argent ou contrat
 ETIQUETTE_IMPACT = re.compile(r"\s*\(impact\s+(fort|normal|faible)(?:\s*:\s*([^()]{1,60}?))?\s*\)", re.I)
 ETIQUETTE_EFFORT = re.compile(r"\s*\(effort\s+(court|long)\)", re.I)
 EN_RETARD, SECURITE, BLOQUE, URGENT, RANGEMENT = 'en retard', 'sécurité', 'bloqué', 'urgent', 'rangement'
+SESSION_ATTEND, ARRET_EN_COURS = 'une session attend', 'arrêtée en plein travail'
+RAISON_ARRET = {'authorization': 'attend une autorisation', 'refused': 'arrêtée sur une autorisation',
+                'error': 'arrêtée sur une erreur', 'interrupted': ARRET_EN_COURS}
 MOT_SECURITE = re.compile(r"(?i)\ben clair\b")
 MOT_BLOQUE = re.compile(r"(?i)(?<!non )(?<!pas )\bbloqu(?:ée?s?|ante?s?)\b")
 MOT_URGENT = re.compile(r"(?i)\bsans délai\b|\burgent(?:e|es|s)?\b")
@@ -4081,13 +4080,17 @@ def etiquettes(texte):
 
 
 def priorite(texte, maintenant, dit=None, echeance=None, proche=False, bloque=False, arret=None, type_=None,
-             choix=None, demande=False):
+             choix=None, demande=False, depuis=None):
     """{'impact', 'raison', 'effort'} of a line. What its writer said (`dit`, from etiquettes) comes first; else the
     rules: a deadline close or passed, a session that waits or stopped, a word that says so (« bloqué », « en clair »,
     « sans délai ») make it « fort »; for a request of the ingestion (`demande`), a person who asks or waits too;
     « archiver cette session » makes it « faible ». The effort is « court » when the board answers it in one click.
-    `echeance`: a timestamp in seconds or None. `raison` is '' when the line already says it (date, « une session
-    attend »)."""
+    `echeance`: a timestamp in seconds or None. A « fort » line always carries its `raison` (a date, « une session
+    attend », « arrêtée en plein travail »…): the page shows it as the chip of the line.
+    `depuis`: when the line appeared, in seconds (None: unknown, no limit). « Une session attend » (`bloque`) makes a
+    line « fort » for 24 h only, like rang_urgence; « Prénom attend » (`demande`) for 7 days only (PM, Q5, 2026-11-25).
+    After that the request is « normal » and carries `attend_nom` (the person), which the page shows as « Prénom attend
+    depuis N j » on the line: the wait stays visible, the line leaves « D'abord »."""
     dit = dit or {}
     t = ' '.join(str(texte or '').split())
     effort = dit.get('effort') or ('court' if choix or type_ in EFFORT_COURT else '')
@@ -4096,11 +4099,16 @@ def priorite(texte, maintenant, dit=None, echeance=None, proche=False, bloque=Fa
     retard = bool(echeance) and dt.date.fromtimestamp(echeance) < dt.date.fromtimestamp(maintenant)
     if MOT_ARCHIVAGE.search(t) and not demande:
         return {'impact': 'faible', 'raison': RANGEMENT, 'effort': effort}
-    for vrai, raison in ((retard, EN_RETARD), (proche or bloque or bool(arret), ''), (MOT_SECURITE.search(t), SECURITE),
+    # Every « fort » line says why (PM, 2026-11-19): the reason shown on the line is the one that put it in « D'abord ».
+    echeance_dite = f"échéance {dt.date.fromtimestamp(echeance).strftime('%d/%m')}" if echeance else 'échéance proche'
+    for vrai, raison in ((retard, EN_RETARD), (proche, echeance_dite), (bool(arret), RAISON_ARRET.get(arret, ARRET_EN_COURS)),
+                         (bloque and (not depuis or maintenant - depuis < ATTEND_DEVANT_S), SESSION_ATTEND), (MOT_SECURITE.search(t), SECURITE),
                          (MOT_URGENT.search(t), URGENT), (MOT_BLOQUE.search(t), BLOQUE)):
         if vrai:
             return {'impact': 'fort', 'raison': raison, 'effort': effort}
     m = QUELQU_UN_ATTEND.match(t) if demande else None
+    if m and depuis and maintenant - depuis >= PRENOM_ATTEND_S:
+        return {'impact': 'normal', 'raison': '', 'effort': effort, 'attend_nom': m.group(1)}
     if m:
         return {'impact': 'fort', 'raison': f"{m.group(1)} attend", 'effort': effort}
     return {'impact': 'normal', 'raison': '', 'effort': effort}
@@ -4149,7 +4157,7 @@ def ligne_de_tache(a, par_id, couloirs, vise, jours, maintenant):
     texte = tete + libelle_arret(arret)
     d = {'titre': '', 'suite': texte[:1].upper() + texte[1:], 'depuis': depuis, 'type': 'task', 'verbe': 'Ouvrir',
          'lecture': 'auto', 'arret': arret['quoi'] if arret['quoi'] in ('authorization', 'error') else 'interrupted',
-         'ancienne': maintenant - depuis > jours * 86400}
+         'arret_precis': arret['quoi'], 'ancienne': maintenant - depuis > jours * 86400}   # what stopped it: the reason on the line
     if arret['quoi'] == 'authorization':
         d.update(bloque=True, extrait=extrait_lisible(arret.get('extrait')))
     if arret.get('extrait'):   # what the pass wanted to do, for the unfold (a cache of an older version kept the raw name)
@@ -4437,7 +4445,7 @@ def lignes_et_anciennes(sessions, metas, autos, jours, maintenant, cache=None, f
             l[champ], vu = etiquettes(l.get(champ) or '')
             dit = {**vu, **dit}
         calcul = priorite(f"{l['titre']} {l['suite']}", maintenant, dit, l['echeance'], l['proche'], l['bloque'],
-                          l.get('arret'), l['type'], l.get('choix'))
+                          l.get('arret_precis') or l.get('arret'), l['type'], l.get('choix'), depuis=l['depuis'])
         l.update(calcul)
         # What the rules gave, kept for the PM's journal; his own order, when he set one, holds over it.
         l['calcul'] = dict(calcul, regle=regle_du_calcul(dit, calcul, l['proche'], l['bloque'], l.get('arret')))
@@ -4464,25 +4472,25 @@ def lignes_et_anciennes(sessions, metas, autos, jours, maintenant, cache=None, f
             # A card's question and its answers on one line, never two (PM, 2026-11-18): the question is cut, its
             # answers stay whole; the click shows the question in full.
             place = max(25, LIGNE_MAX - len(l['suite'] or '') - 3)
-            l['affiche_titre'], l['affiche_suite'] = couper(l['titre'], place), l['suite']
+            l['affiche_titre'], l['affiche_suite'] = coupe_nette(l['titre'], place), l['suite']
             l['complet'] = l['detail']
         elif l.get('entier'):
-            l['affiche_titre'], l['affiche_suite'] = '', couper(complet, LIGNE_MAX)
+            l['affiche_titre'], l['affiche_suite'] = '', coupe_nette(complet, LIGNE_MAX)
         elif l['titre'] and l.get('num') is not None and not l.get('chantier') \
                 and format_court(l['titre'], l.get('brut') or complet):
             # Short titles (PM, 2026-11-18): « Qn · <title> » alone; the click shows the question in full.
-            l['affiche_titre'], l['affiche_suite'] = couper(l['titre'], LIGNE_MAX), ''
+            l['affiche_titre'], l['affiche_suite'] = coupe_nette(l['titre'], LIGNE_MAX), ''
         elif l['titre']:
             # An older question (its title a topic, the decision in its text): one line, never two (PM, 2026-11-18).
             place = LIGNE_MAX - len(l['titre']) - 3
-            l['affiche_titre'] = couper(l['titre'], LIGNE_MAX)
-            l['affiche_suite'] = couper(l['suite'], place) if l['suite'] and place >= 25 else ''
+            l['affiche_titre'] = coupe_nette(l['titre'], LIGNE_MAX)
+            l['affiche_suite'] = coupe_nette(l['suite'], place) if l['suite'] and place >= 25 else ''
         elif l.get('renvoi') and ' · ' in l['suite'] and len(l['suite'].rsplit(' · ', 1)[1]) <= 40:
             # « … · Q21 au tableau Essai »: the questions it names stay on the line, the sentence is cut before them.
             tete, renvoi = l['suite'].rsplit(' · ', 1)
-            l['affiche_titre'], l['affiche_suite'] = '', couper(tete, LIGNE_MAX - len(renvoi) - 3) + ' · ' + renvoi
+            l['affiche_titre'], l['affiche_suite'] = '', coupe_nette(tete, LIGNE_MAX - len(renvoi) - 3) + ' · ' + renvoi
         else:
-            l['affiche_titre'], l['affiche_suite'] = '', couper(l['suite'], LIGNE_MAX)
+            l['affiche_titre'], l['affiche_suite'] = '', coupe_nette(l['suite'], LIGNE_MAX)
         # Le dépli d'une ligne hors chantier : son texte complet, que l'affichage coupe ; une question rappelée posée
         # dans un menu, ou introuvable, porte le sien (demandes). Une ligne de chantier sans texte au tableau montre son
         # titre entier s'il a été coupé.
@@ -4644,7 +4652,7 @@ def nouvelles(sessions, metas, maintenant):
     for s in sessions:
         chef = couloirs.get(s['id'])
         # « Rien à faire de ton côté. » seul n'apprend rien : pas de nouvelle.
-        texte = ' '.join(p for p in couper_phrases(s.get('ouverture') or '') if not rien_a_faire(p, generique=True))
+        texte = ' '.join(p for p in couper_phrases(s.get('ouverture') or '') if not rien_a_faire(p))
         if (chef and s['id'] != chef and s['etat'] == 'attend' and texte
                 and maintenant - s['depuis'] < NOUVELLE_S and not demandes(s)):
             sortie.append({'chef': chef, 'sessionId': s['id'], 'session': titre_lien(s['titre']),

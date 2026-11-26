@@ -11,7 +11,8 @@ it, nothing to clean up. A rule the PM already imports in his CLAUDE.md (any `@‚
 given twice: it is recognised by its file name, with a plural or singular word counted as the same name
 (`@modeles-effort.md` covers `modele-effort.md`). When every rule is already imported, nothing is printed.
 
-Silent unless Mon Studio is installed (~/Mon Studio/.parc/cockpit.json, or $MON_STUDIO), and never fails a session.
+Silent unless Mon Studio is installed (~/Mon Studio/.parc/cockpit.json, or $MON_STUDIO), silent too in a session
+opened outside any Studio (perimetre.py), and never fails a session.
 
     python3 regles.py            # what the hook prints
     python3 regles.py --liste    # which rules would be printed and which are already imported, for whoever maintains
@@ -80,10 +81,24 @@ def rules_to_print(env=None):
     return [r for r in rules if key(r.name) not in already], [r for r in rules if key(r.name) in already]
 
 
+def _en_studio():
+    """True when the session was opened in a Studio; reads the hook input (its `cwd`). Any doubt: True."""
+    try:
+        import json
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+        import perimetre
+        donnees = json.loads(sys.stdin.read() or '{}') if not sys.stdin.isatty() else {}
+        return perimetre.session_de_studio(donnees.get('cwd') if isinstance(donnees, dict) else None)
+    except Exception:
+        return True
+
+
 def main(argv):
     try:
         if not (mon_studio() / '.parc' / 'cockpit.json').is_file():
             return 0
+        if '--liste' not in argv and not _en_studio():
+            return 0   # a session outside any Studio gets no PM rule (perimetre.py)
         todo, skipped = rules_to_print()
         if '--liste' in argv:
             print('donn√©es : ' + (', '.join(r.name for r in todo) or 'aucune'))

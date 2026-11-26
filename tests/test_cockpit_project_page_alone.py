@@ -47,7 +47,7 @@ class ProjectPageAlone(unittest.TestCase):
         out = self.run_page(self.donnees(now))
         self.assertTrue(out['rangeesVisibles'])
         self.assertFalse(out['studiosHidden'])
-        self.assertEqual(out['compte'], "2 à faire d'abord")
+        self.assertEqual(out['compte'], "2 à faire d\'abord au tableau")
 
     def test_a_pinned_project_page_shows_nothing_of_another_project(self):
         now = int(time.time() * 1000)
@@ -56,7 +56,7 @@ class ProjectPageAlone(unittest.TestCase):
         self.assertTrue(out['studiosHidden'])
         self.assertTrue(out['ongletsHidden'])
         self.assertTrue(out['boiteCachee'])
-        self.assertEqual(out['compte'], "1 à faire d'abord")
+        self.assertEqual(out['compte'], "1 à faire d\'abord dans ce projet")
 
     def test_the_project_view_opened_from_the_board_hides_the_rest(self):
         now = int(time.time() * 1000)
@@ -65,7 +65,7 @@ class ProjectPageAlone(unittest.TestCase):
         self.assertFalse(out['rangeesVisibles'])
         self.assertTrue(out['studiosHidden'])
         self.assertTrue(out['ongletsHidden'])
-        self.assertEqual(out['compte'], "1 à faire d'abord")
+        self.assertEqual(out['compte'], "1 à faire d\'abord dans ce projet")
 
     def test_main_threads_are_rows_most_recent_first(self):
         now = int(time.time() * 1000)

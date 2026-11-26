@@ -18,11 +18,17 @@ the PM's click, relayed by the MCP tool `decider` of whichever instance the page
 The first valid answer (same id, allow or deny) wins; the hook then closes every connection, so the request leaves the
 other instances too. No socket reachable, every connection closed, unreadable answers only, or no answer in time: it
 exits without output, and the app's normal permission window stays (the hook runs alongside it; whichever answers first
-applies). It never writes the request, or any nonce, to disk. On Windows (no Unix socket everywhere) it does nothing.
+applies). It never writes the request's content, or any nonce, to disk. On Windows (no Unix socket everywhere) it does
+nothing more.
+
+Switch on or off, it first leaves a trace of the request: ~/Mon Studio/.parc/demandes-autorisation/<session>.json, with
+the time and the tool's name only. The board reads it to tell a tool that waits for the PM's authorization from a tool
+that simply runs long (a 10 min test suite, PM 2026-11-26: two running sessions read « arrêtée sur une autorisation »).
 """
 import json
 import os
 import pathlib
+import re
 import secrets
 import select
 import socket
@@ -136,7 +142,32 @@ def attendre(connexions, ident, fin, valide):
             del recus[s]   # unreadable or foreign: this instance is out, the others may still answer
     return None
 
+TRACES = INTERNE / 'demandes-autorisation'
+
+
+def tracer(demande):
+    """The trace of a request (time and tool, nothing of what it would do): what the board needs to say « arrêtée sur
+    une autorisation » rather than « travaille ». One file per session, replaced at each request."""
+    sid = str(demande.get('session_id') or '')
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', sid):
+        return
+    TRACES.mkdir(parents=True, exist_ok=True)
+    tmp = TRACES / f'.{sid}.tmp'
+    tmp.write_text(json.dumps({'t': time.time(), 'outil': str(demande.get('tool_name') or '')}), encoding='utf-8')
+    os.replace(tmp, TRACES / f'{sid}.json')
+
+
 def main():
+    try:
+        demande = json.loads(sys.stdin.read() or '{}')
+    except ValueError:
+        return 0
+    if not isinstance(demande, dict):
+        return 0
+    try:
+        tracer(demande)
+    except OSError:
+        pass
     if os.name == 'nt' or not hasattr(socket, 'AF_UNIX'):
         return 0
     try:
@@ -145,11 +176,7 @@ def main():
         return 0
     if not isinstance(etat, dict) or etat.get('autorisations_tableau') is not True:
         return 0
-    try:
-        demande = json.loads(sys.stdin.read() or '{}')
-    except ValueError:
-        return 0
-    if not isinstance(demande, dict) or not concerne(etat, demande):
+    if not concerne(etat, demande):
         return 0
     try:
         decision = demander(demande)

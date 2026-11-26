@@ -433,6 +433,22 @@ class Page(unittest.TestCase):
         self.assertIn('<span class="pastille">3</span>', out['ongletMatin'])
         self.assertEqual(out['ongletMatinLabel'], 'Today · 3 à traiter')
 
+    def test_the_open_questions_of_a_meeting_open_the_board_on_that_project(self):
+        # PM, 2026-11-20: « 26 questions ouvertes » beside a meeting was text. It is a button; one click shows the board
+        # filtered on the project (the lines that were counted), on the board tab.
+        lignes = [{'studio': 'Alpha', 'session': 's%d' % i, 'cle': 'c%d' % i, 'lien': '', 'type': 'decision', 'verbe': 'Répondre',
+                   'affiche_titre': 'Q%d · Format' % i, 'affiche_suite': 'lequel ?', 'question': 'Q%d' % i,
+                   'retrait': 'r00000000000%d' % i, 'bloque': False, 'proche': False} for i in (1, 2)]
+        lignes.append(dict(lignes[0], studio='Beta', cle='c9', retrait='r000000000099', affiche_titre='Q9 · Autre'))
+        out = self.run_page(matin=self.MATIN, lignes=lignes, outils=['lignes', 'clore'], cliquer=[['data-voir-questions', 'Alpha']])
+        self.assertIn('data-voir-questions="Alpha"', out['matinAvant'])
+        self.assertIn('2 questions ouvertes', out['matinAvant'])
+        self.assertEqual(out['ongletTableauSelected'], 'true')
+        self.assertFalse(out['vueTableauHidden'])
+        self.assertIn('aria-pressed="true"', out['studios'])
+        self.assertNotIn('Q9', out['tableau'])
+        self.assertIn('Q1', out['tableau'])
+
     def test_no_count_when_nothing_is_open_and_no_tabs_without_matin(self):
         out = self.run_page(matin=dict(self.MATIN, a_traiter=[]))
         self.assertNotIn('pastille', out['ongletMatin'])
@@ -461,13 +477,13 @@ class Page(unittest.TestCase):
     def test_the_band_the_lists_and_the_source_buttons(self):
         out = self.run_page(matin=self.MATIN, outils=['lignes', 'clore'])
         h = out['matin']
-        self.assertIn('Journée lourde · 3 à traiter', h)
+        self.assertIn('Journée lourde · 3 à traiter aujourd&#39;hui', h)
         self.assertIn('Point &lt;équipe&gt;', h)
         self.assertIn('Répondre au &lt;client&gt;', h)
         self.assertNotIn('Ouvrir ↗', h, 'a line leads to its source, never to a session')
         self.assertNotIn('data-sid', h)
         self.assertIn('href="https://example.org/1" target="_blank" rel="noopener noreferrer">Gmail ↗', h)
-        self.assertIn('>Slack ↗</a>', h)
+        self.assertIn('>Slack ↗</button>', h)   # through the connector, into the Slack app (Q14)
         self.assertIn('data-fichier="projet/a.md" data-dossier="/S/Alpha"', h)
         self.assertIn('>Fichier ↗</button>', h)
         self.assertIn('data-matin-fait="k1"', h)
@@ -482,7 +498,13 @@ class Page(unittest.TestCase):
                  'https://acme.slack.com/archives/C1': 'Slack', 'https://docs.google.com/document/d/1': 'Drive'}
         for lien, libelle in cases.items():
             out = self.run_page(matin=dict(self.MATIN, a_traiter=[item(1, source='studio', lien=lien)]))
-            self.assertIn(f'>{libelle} ↗</a>', out['matin'], lien)
+            fin = '</button>' if libelle == 'Slack' else '</a>'   # a Slack message opens in the app (Q14)
+            self.assertIn(f'>{libelle} ↗{fin}', out['matin'], lien)
+
+    def test_slack_calls_ouvrir_with_the_message_address(self):
+        u = 'https://acme.slack.com/archives/C0ABC1234/p1793900000000100'
+        out = self.run_page(matin=self.MATIN, cliquer=[['data-slack', u]])
+        self.assertIn(['ouvrir', {'slack': u}], out['appels'])
 
     def test_a_file_without_its_studio_has_no_button(self):
         out = self.run_page(matin=dict(self.MATIN, a_traiter=[item(1, source='studio', lien='projet/a.md', dossier=None)]))
@@ -512,7 +534,7 @@ class Page(unittest.TestCase):
         self.assertIn('data-matin-fait="k1"', out['matinAvant'])
         self.assertNotIn('data-matin-fait="k1"', out['matin'])
         self.assertIn('data-matin-fait="k2"', out['matin'])
-        self.assertIn('Journée lourde · 2 à traiter', out['matin'])
+        self.assertIn('Journée lourde · 2 à traiter aujourd&#39;hui', out['matin'])
         self.assertIn('<span class="pastille">2</span>', out['ongletMatin'])
 
     def test_no_clore_tool_no_fait_button(self):

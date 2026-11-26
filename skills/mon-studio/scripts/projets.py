@@ -15,8 +15,9 @@ ceux de ~/Mon Studio/studios.json (une liste de chemins) ; le disque n'est jamai
               du Studio seulement. Notée si son passage a moins de 14 jours, puis ouverte, avec son âge et son
               échéance, jusqu'à ce qu'elle soit réglée (`reglees` de l'ingestion) ou fermée à la main. La page la
               montre aussi au tableau principal (champ `lignes` de son bloc).
-    entree    « Ce qui est entré » des mêmes passages : pour tous, tant que le passage est dans la fenêtre, puis
-              s'efface d'elle-même.
+    entree    « Ce qui est entré » des mêmes passages : pour tous. « Pour info » : seulement un fait récent (sa date,
+              lue dans le texte, est de la veille ouvrée ou d'aujourd'hui) que le PM n'a pas déjà vu un jour précédent
+              (le passage est postérieur à la dernière visite de la page avant minuit) ; puis s'efface d'elle-même.
     question  les lignes ouvertes du tableau de Mon Studio pour ce Studio : pour tous (ce sont les sessions de ce
               Mac) ; fermée d'elle-même quand elle quitte le tableau.
     reunion   les réunions sans compte rendu de ~/Mon Studio/matin.json (`reunions_sans_cr`, écrit par la tâche du point
@@ -39,6 +40,7 @@ côté de ce fichier sous le nom registre_conflits.py.
 """
 import contextlib
 import datetime as dt
+import functools
 import hashlib
 import importlib.util
 import json
@@ -70,12 +72,28 @@ def _charger_parc():
 parc = _charger_parc()
 
 
-def _charger_matin():
-    """matin.py du même dossier, rechargé à chaque appel (petit, et le connecteur ne se relance pas), sur le parc de
-    ce module."""
-    spec = importlib.util.spec_from_file_location('matin', ICI / 'matin.py')
+_modules = {}   # {(nom, chemin): ((mtime, taille), module)} : un module voisin n'est relu que si son fichier change
+
+
+def _module_voisin(nom, chemin):
+    """Le module de ce fichier, chargé une fois puis rechargé seulement quand le fichier change (mtime, taille) : le
+    connecteur ne se relance pas, et sans cache de bytecode chaque chargement recompilait matin.py et le parc.py qu'il
+    charge (près d'une seconde par lecture du tableau, 2026-11-23)."""
+    st = os.stat(chemin)
+    cle = (st.st_mtime_ns, st.st_size)
+    gardee = _modules.get((nom, str(chemin)))
+    if gardee is not None and gardee[0] == cle:
+        return gardee[1]
+    spec = importlib.util.spec_from_file_location(nom, chemin)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    _modules[(nom, str(chemin))] = (cle, module)
+    return module
+
+
+def _charger_matin():
+    """matin.py du même dossier, rechargé quand il change (le connecteur ne se relance pas), sur le parc de ce module."""
+    module = _module_voisin('matin', ICI / 'matin.py')
     module.parc = parc
     return module
 
@@ -86,13 +104,15 @@ ANCIENNE_A_TOI_S = 7 * 86400   # au tableau, un « À toi » de plus de 7 jours 
 FERMEES_MONTREES = 3      # « Fermé depuis hier » : trois titres au plus par Studio
 TITRE_MAX = 160
 RECRIT_S = 600            # depuis le connecteur, projets.json n'est récrit que s'il a changé, ou toutes les 10 min
+LIGNE_PM_CLE = re.compile(r'^pm:[ \t]*([^()\n]*?)[ \t]*(?:\(.*)?$', re.M)
 LIGNE_PM = re.compile(r'^\|\s*\*{0,2}PM\*{0,2}\s*\|\s*([^|]*?)\s*\|', re.M)
 ADRESSE_PAGE = re.compile(r'^https://claude\.ai/(?:code/)?artifact/[A-Za-z0-9_-]+$')
 CLE = re.compile(r'^[0-9a-f]{12}$')
 ORDRE_TYPES = {'a_toi': 0, 'reunion': 1, 'question': 2, 'entree': 3}
 SOURCES = {'a_toi': 'à toi de jouer (ingestion)', 'entree': 'entré au Studio (ingestion)',
            'reunion': 'réunion sans compte rendu', 'conflits': 'conflits à trancher (session des conflits)',
-           'verifier': 'premier relevé des conflits (session des conflits)'}
+           'verifier': 'premier relevé des conflits (session des conflits)',
+           'repasse': 'passe complète des conflits à refaire (session des conflits)'}
 # Ce que projets-sources.json garde d'une entrée `reglees` du kit, en plus de `ts` et `texte` (contrat du kit
 # d'ingestion, « Demande au cockpit : points réglés par la source ») : le genre (a_toi ou question), la question
 # nommée {numero, doc, sessionId, chantier}, la réouverture par le PM, la référence et la preuve.
@@ -108,6 +128,10 @@ def _sortie():
 def _etat_chemin():
     return parc.INTERNE / 'projets-etat.json'
 
+def _visites_chemin():
+    return parc.INTERNE / 'visites.json'
+
+
 def _instantane_chemin():
     return parc.INTERNE / 'projets-sources.json'
 
@@ -120,6 +144,15 @@ def _sans_accents(s):
 
 def normaliser(s):
     """Pour comparer : sans accents, en minuscules, espaces réduits, sans ponctuation finale."""
+    return _normaliser(s) if isinstance(s, str) else _normaliser_calcule(s)
+
+
+@functools.lru_cache(maxsize=16384)
+def _normaliser(s):   # pure: the same titles are compared tens of thousands of times per reading
+    return _normaliser_calcule(s)
+
+
+def _normaliser_calcule(s):
     s = re.sub(r'\s+', ' ', _sans_accents(texte_simple(s)).lower()).strip()
     return s.rstrip(' .;:!')
 
@@ -219,9 +252,9 @@ def couper(s, n=TITRE_MAX):
     return s if len(s) <= n else s[:n - 1].rstrip() + '…'
 
 
-# The title of a request (0.2.17): short, read whole. The kit's « titre court : détail » gives it; else the first
-# sentence; else the text cut on a word, never inside a command, a path or a code span (« …en tapant /st… » hid the
-# very command to type). The full text stays in the line (`texte`), shown in its unfold.
+# The title of a request (0.2.17): short, read whole. The kit's « titre court : détail » gives it; else the head of the
+# sentence up to a natural break (parc.coupe_nette), never « … » and never inside a command, a path or a code span
+# (« …en tapant /st… » hid the very command to type). The full text stays in the line (`texte`), shown in its unfold.
 TITRE_COURT = 100
 TEXTE_MAX = 1000
 FIN_PHRASE = re.compile(r'[.!?](?=\s)')
@@ -236,13 +269,7 @@ def titre_court(texte, n=TITRE_COURT):
         return tete.rstrip(' ,;')
     if len(t) <= n:
         return t
-    m = FIN_PHRASE.search(t, 20)
-    if m and m.end() <= n:
-        return t[:m.end()]
-    sortie = t[:n + 1].split(' ')[:-1]   # whole words only: the last piece is cut, or empty
-    while sortie and (MOT_TECHNIQUE.search(sortie[-1]) or ' '.join(sortie).count('`') % 2):
-        sortie.pop()   # never end on a command, a path or inside a code span
-    return ' '.join(sortie).rstrip(' ,;:(«-–') + '…'
+    return parc.coupe_nette(t, n, premier=True)   # a natural break, never « … » (PM, 2026-11-19)
 
 
 def commande_de(texte):
@@ -259,6 +286,17 @@ def cle_de(*parts):
 
 def dossier_normal(cwd):
     """Le dossier d'un Studio, sans la copie de travail de l'app (<dépôt>/.claude/worktrees/<nom>), comme nom_projet."""
+    if isinstance(cwd, str):
+        return _dossier_normal(cwd, os.environ.get('HOME', '') if cwd.startswith('~') else '')
+    return _dossier_normal_calcule(cwd)
+
+
+@functools.lru_cache(maxsize=8192)
+def _dossier_normal(cwd, home):   # pure on (folder, HOME), which expanduser reads
+    return _dossier_normal_calcule(cwd)
+
+
+def _dossier_normal_calcule(cwd):
     # NFC : macOS rend le même dossier tantôt composé, tantôt décomposé (« partagés ») selon la fiche.
     chemin = unicodedata.normalize('NFC', os.path.normpath(os.path.expanduser(cwd)))
     m = re.match(r'^(.+?)/\.claude/worktrees/[^/]+(?:/.*)?$', chemin)
@@ -277,10 +315,10 @@ def studios(metas, instantane=None):
     extra = parc.lire_json(_sortie() / 'studios.json', [])
     if isinstance(extra, list):
         candidats += [x for x in extra if isinstance(x, str) and x.strip()]
-    vus, sortie = set(), []
+    vus, sortie, masques = set(), [], parc.projets_masques()
     for c in candidats:
         d = dossier_normal(c)
-        if d in vus or d in (os.path.normpath(str(parc.HOME)), os.path.normpath(str(_sortie()))):
+        if d in vus or d in (os.path.normpath(str(parc.HOME)), os.path.normpath(str(_sortie()))) or parc.est_masque(d, masques):
             continue
         vus.add(d)
         if _est_un_studio(d, instantane):
@@ -317,7 +355,29 @@ def identite_et_source():
     return None, 'aucun'
 
 
+_git_lu = {'cle': None, 'nom': None}
+
+
 def nom_de_git():
+    """Le user.name global de git, relu seulement quand ce qui le règle change (~/.gitconfig, ~/.config/git/config et les
+    variables qui les déplacent) : deux appels de git par lecture du tableau coûtaient 0,15 s (2026-11-23)."""
+    home = pathlib.Path.home()
+    xdg = os.environ.get('XDG_CONFIG_HOME') or str(home / '.config')
+    cle = [str(home), xdg, os.environ.get('GIT_CONFIG_GLOBAL'), os.environ.get('GIT_CONFIG_NOSYSTEM')]
+    for chemin in (home / '.gitconfig', pathlib.Path(xdg) / 'git' / 'config', os.environ.get('GIT_CONFIG_GLOBAL')):
+        try:
+            st = os.stat(chemin) if chemin else None
+            cle.append((st.st_mtime_ns, st.st_size) if st else None)
+        except OSError:
+            cle.append(None)
+    if _git_lu['cle'] == cle:
+        return _git_lu['nom']
+    nom = _nom_de_git()
+    _git_lu.update(cle=cle, nom=nom)
+    return nom
+
+
+def _nom_de_git():
     for git in ('git', '/usr/bin/git', '/opt/homebrew/bin/git', '/usr/local/bin/git'):
         try:
             r = subprocess.run([git, 'config', '--global', 'user.name'], capture_output=True, text=True, timeout=2)
@@ -391,6 +451,12 @@ def pm_dans(texte):
         if not v or m.group(1).strip().startswith('_'):
             return None
         return v
+    # The identity block of some sheets is a code block of « key: value » lines (« pm: Camille Durand (PM effectif…) »):
+    # without this the PM was nobody there and the Studio counted as another's (PM, 2026-11-20: no « Vérifier les
+    # conflits » line for his own Studio).
+    m = LIGNE_PM_CLE.search(texte)
+    if m and m.group(1).strip() and not m.group(1).strip().startswith(('_', '[')) and not re.match(r'(?i)^(?:à compléter|a completer|tbd)', m.group(1).strip()):
+        return m.group(1).strip()
     m = LIGNE_RESPONSABLE.search(texte)
     noms = [n.strip(' *_') for n in NOM_PM.findall(m.group(1))] if m else []
     return ', '.join(n for n in noms if n) or None
@@ -489,6 +555,7 @@ def lire_sources(dossier, maintenant):
     # with the register in the snapshot, for when the Drive refuses the connector.
     vu = parc.lire_json(projet / '.conflits' / 'vu.json', None)
     reglages = parc.lire_json(projet / '.conflits' / 'reglages.json', None)
+    hors_journal = parc.lire_json(projet / '.conflits' / 'hors-journal.json', None)
     # The backlog's contradictions and decisions (/backlog:nettoyer), parsed, kept for the same reason.
     try:
         backlog = lire_backlog(dossier)
@@ -497,7 +564,7 @@ def lire_sources(dossier, maintenant):
     s = {'pm': pm, 'ingestion': bool(ing), 'ingestion_derniere': derniere, 'passages': sorted(passages, key=lambda n: n['ts']),
          'reglees': reglees, 'lu': maintenant, 'refus': refus, 'conflits': conflits,
          'conflits_vu': vu if isinstance(vu, dict) else None, 'conflits_reglages': reglages if isinstance(reglages, dict) else None,
-         'backlog': backlog}
+         'conflits_hors_journal': hors_journal if isinstance(hors_journal, dict) else None, 'backlog': backlog}
     if not refus:
         s['fichiers'] = textes_des_entrees(dossier, s['passages'], maintenant)
     return s
@@ -540,12 +607,72 @@ def chemin_dans_le_studio(dossier, fichier):
     return chemin, reel
 
 
-def textes_des_entrees(dossier, passages, maintenant, autres=()):
+_DATE_JJMM = re.compile(r'(?<![\d/])(\d{1,2})/(\d{1,2})(?!\d)')
+
+
+def date_du_fait(texte, t_passage):
+    """Local midnight (timestamp) of the date of the fact an entry tells: the most recent jj/mm of its text that is not
+    after the run (a thread from the 18th to the 19th counts as the 19th). Year: the one that puts the date closest in
+    the past of the run (beyond the run + 1 day: the year before). No readable date: the run's own time."""
+    passage = dt.date.fromtimestamp(t_passage)
+    trouvees = []
+    for j, m in _DATE_JJMM.findall(texte or ''):
+        for annee in (passage.year, passage.year - 1):
+            try:
+                d = dt.date(annee, int(m), int(j))
+            except ValueError:
+                break   # 31/02, 45/13: not a date
+            if d <= passage + dt.timedelta(days=1):
+                trouvees.append(d)
+                break
+    if not trouvees:
+        return t_passage
+    return time.mktime(max(trouvees).timetuple())
+
+
+def entree_pour_info(puce, t_passage, debut, vu_avant=None):
+    """True when the entry shows in « Pour info »: (A) its fact is not older than `debut` (the working day before), and
+    (B) the run is later than the last visit of the page made before today (`vu_avant`; None: unknown, B ignored)."""
+    if vu_avant is not None and t_passage <= vu_avant:
+        return False
+    return date_du_fait(decouper_puce(puce)[0], t_passage) >= debut
+
+
+def lire_visites():
+    try:
+        v = json.loads(_visites_chemin().read_text(encoding='utf-8')).get('visites')
+        return [float(x) for x in v] if isinstance(v, list) else []
+    except (OSError, ValueError, AttributeError, TypeError):
+        return []
+
+
+def derniere_visite_avant_aujourdhui(maintenant):
+    """The last visit of the page made before midnight today (local time), else None. Today's visits hide nothing."""
+    minuit = time.mktime(dt.date.fromtimestamp(maintenant).timetuple())
+    avant = [v for v in lire_visites() if v < minuit]
+    return max(avant) if avant else None
+
+
+def noter_visite(maintenant):
+    """Write down this visit of the page (the connector computing it), keeping the last one of each of the 14 last days."""
+    jour = lambda t: dt.date.fromtimestamp(t)
+    gardees = {}
+    for v in sorted(lire_visites() + [maintenant]):
+        if (jour(maintenant) - jour(v)).days <= 14:
+            gardees[jour(v)] = v
+    try:
+        parc.ecrire_atomique(_visites_chemin(), json.dumps({'version': 1, 'visites': sorted(gardees.values())}))
+    except OSError:
+        pass
+
+
+def textes_des_entrees(dossier, passages, maintenant, autres=(), vu_avant=None):
     """{relative path: {texte, tronque, taille}} of the text files the entries since the last working day point to,
     then those of the requests (« À toi ») of the runs read (0.2.17: their « Lire » in the board), then `autres` (the
     files the board's questions cite), within FICHIERS_MAX."""
     debut = debut_fenetre(maintenant)
-    liens = [decouper_puce(x)[2] for n in passages if n['ts'] >= debut for x in n['entres']]
+    liens = [decouper_puce(x)[2] for n in passages if n['ts'] >= debut for x in n['entres']
+             if entree_pour_info(x, n['ts'], debut, vu_avant)]
     liens += [decouper_puce(x)[2] for n in passages for x in n.get('actions') or []]
     sortie, total = {}, 0
     for lien in liens + list(autres):
@@ -600,10 +727,7 @@ def _charger_registre():
     """The conflicts skill's register reader: its copy next to this file (~/Mon Studio/.parc), else the plugin's."""
     for chemin in (ICI / 'registre_conflits.py', ICI.parent.parent / 'conflits' / 'scripts' / 'registre.py'):
         if chemin.exists():
-            spec = importlib.util.spec_from_file_location('registre_conflits', chemin)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            return module
+            return _module_voisin('registre_conflits', chemin)
     return None
 
 
@@ -671,6 +795,28 @@ TRI_ACTIF_S = 24 * 3600               # a settling session is « en cours » whe
 SESSION_ID = re.compile(r'^local_[0-9a-f-]{36}$')
 BACKLOG_CONTRADICTIONS = ('backlog', '_contexte', 'contradictions.md')
 BACKLOG_DECISIONS = ('backlog', '_contexte', 'decisions-pm.md')
+PAS_TRANCHEE = re.compile(r"(?i)^(?:pas|non|n[’']est pas|reste)\s+(?:encore\s+)?(?:tranch|ouvert)")
+
+
+REPASSE_JOURS = 30   # Mon Studio suggests a full conflicts pass this many days after the last one (2026-11-19, PM)
+
+
+def repasse_du_studio(d, dernier_passage, maintenant, instantane=None):
+    """{'due', 'jours', 'seuil'}: days since the register's « Dernier passage » (JJ/MM/AAAA) and the period after which a
+    new full pass is suggested (REPASSE_JOURS, or `repasse_jours` 1..365 in projet/.conflits/reglages.json, snapshot
+    fallback as _vu_et_reglages). None without a readable last pass."""
+    iso = _iso_du_passage(dernier_passage)
+    if not iso:
+        return None
+    reglages = parc.lire_json(pathlib.Path(d) / 'projet' / '.conflits' / 'reglages.json', None)
+    if reglages is None:
+        reglages = ((lire_instantane() if instantane is None else instantane).get(d) or {}).get('conflits_reglages')
+    seuil = (reglages or {}).get('repasse_jours') if isinstance(reglages, dict) else None
+    if not (isinstance(seuil, int) and not isinstance(seuil, bool) and 1 <= seuil <= 365):
+        seuil = REPASSE_JOURS
+    jours = (dt.date.fromtimestamp(maintenant) - dt.date.fromisoformat(iso)).days
+    jours = max(jours, 0)
+    return {'due': jours >= seuil, 'jours': jours, 'seuil': seuil}
 
 
 def sessions_qui_tranchent(dossier, metas):
@@ -693,6 +839,11 @@ def _texte_de_question(l):
     (type 'question': titre, detail = the answers) or the parc line (complet / detail = the whole statement)."""
     if l.get('type') == 'question' and 'affiche_titre' not in l:
         return texte_simple(l.get('titre') or ''), texte_simple(l.get('detail') or '')
+    if l.get('type') == 'task':
+        # A task line is an action for the PM: its `detail` is the instruction (« coller le prompt donné dans la
+        # session… »), its subject is the title. The tab shows the subject, never the instruction (PM, 2026-11-20).
+        sujet = texte_simple(l.get('complet') or l.get('titre') or l.get('affiche_suite') or l.get('affiche_titre') or '')
+        return sujet or 'Relevé en cours', ''
     texte = texte_simple(l.get('detail') or l.get('complet') or l.get('titre') or l.get('affiche_titre') or '')
     options = l.get('choix_libelles')
     if isinstance(options, list):
@@ -715,7 +866,7 @@ def questions_en_cours(dossier, metas, questions):
     tranchent = {m['id']: m for m in sessions_qui_tranchent(dossier, metas)}
     sortie = []
     for l in questions or []:
-        if not isinstance(l, dict) or l.get('type') in ('a_toi', 'reunion', 'entree', 'verifier', 'conflits'):
+        if not isinstance(l, dict) or l.get('type') in ('a_toi', 'reunion', 'entree', 'verifier', 'repasse', 'conflits'):
             continue
         sid = next((x for x in (session_de_ligne(l), l.get('source'), l.get('session')) if x in tranchent), None)
         if not sid:
@@ -727,6 +878,67 @@ def questions_en_cours(dossier, metas, questions):
     return sortie
 
 
+# A question a session asks about a register case is that case, not a second conflict (PM, Q21, 2026-11-24). No LLM:
+# the question matches a case when it contains the case's subject, or shares at least MOTS_COMMUNS significant words
+# (length >= 4, not a stopword, plural s/x dropped; 4 and not 5 letters because « mise à jour », « sur place » carry the
+# meaning of many cases) with the case's subject, old and new values. K = 4: three shared words happen by chance
+# (« poste », « distance », « uniquement » in a question about another matter), and the words every question carries
+# (session, conflit, trancher…) are stopwords; the tests pin both sides. The best score wins, a case answers one
+# question at most, a question is about one case at most.
+MOTS_COMMUNS = 4
+_MOTS_VIDES = frozenset("""
+    alors ainsi apres avant avec aussi cette ceci cela celui chez comme contre dans depuis donc elle elles entre encore
+    etre faire fait faut fera leur leurs mais meme moins notre nous nouvelle nouvelles nouveau parce pour pourtant puis
+    quand quel quelle quels quelles sans selon sera seront sont sous tous tout toute toutes votre vous plus tres
+    ancienne anciennes ancien anciens valeur valeurs trancher tranche session sessions conflit conflits studio
+    propose proposait ecrit ecrire indique indiquait disait question questions reponse reponses choix
+    """.split())
+
+
+def _plat(texte):
+    return ' '.join(re.findall(r'[a-z0-9]+', normaliser(texte)))
+
+
+def _mots_significatifs(texte):
+    mots = set()
+    for m in re.findall(r'[a-z0-9]+', normaliser(texte)):
+        m = m.rstrip('sx') if len(m) > 5 else m
+        if len(m) >= 4 and m not in _MOTS_VIDES and not m.isdigit():
+            mots.add(m)
+    return mots
+
+
+def associer_questions_aux_cas(questions, cas):
+    """{index of question: index of case}: each question about a register case, each case taken at most once (best
+    score first). `questions` = [{'question', ...}], `cas` = the 'ouverts' of conflits_du_projet."""
+    paires = []
+    for i, q in enumerate(questions):
+        plat = _plat(q.get('question') or '')
+        mots_q = _mots_significatifs(plat)
+        for j, c in enumerate(cas):
+            sujet = _plat(c.get('sujet') or '')
+            if len(sujet) >= 6 and sujet in plat:
+                paires.append((1000 + len(sujet), i, j))
+                continue
+            pool = _mots_significatifs(' '.join([c.get('sujet') or '', (c.get('ancienne') or {}).get('texte') or '',
+                                                 (c.get('nouvelle') or {}).get('texte') or '']))
+            n = len(mots_q & pool)
+            if n >= MOTS_COMMUNS:
+                paires.append((n, i, j))
+    prises_q, prises_c, sortie = set(), set(), {}
+    for _, i, j in sorted(paires, key=lambda x: (-x[0], x[1], x[2])):
+        if i not in prises_q and j not in prises_c:
+            prises_q.add(i)
+            prises_c.add(j)
+            sortie[i] = j
+    return sortie
+
+
+def _question_numerotee(texte):
+    """A numbered question of the session's own message (« Q29 · … »): a steering question, not a conflict to settle."""
+    return bool(re.match(r'^\s*Q\d+\s*·', texte or ''))
+
+
 def _date_backlog(iso):
     m = re.match(r'^(\d{4})-(\d{2})-(\d{2})', str(iso or ''))
     return f'{m.group(3)}/{m.group(2)}/{m.group(1)}' if m else None
@@ -736,7 +948,7 @@ def lire_backlog(dossier):
     """What /backlog:nettoyer left in the Studio: {'releve': 'JJ/MM/AAAA' | None, 'contradictions': n, 'decisions':
     [{'sujet', 'date', 'choix'}]}, None when neither file exists. OSError when one cannot be read. Lenient: a line it
     does not understand is skipped."""
-    racine, trouve, sortie = pathlib.Path(dossier), False, {'releve': None, 'contradictions': 0, 'decisions': []}
+    racine, trouve, sortie = pathlib.Path(dossier), False, {'releve': None, 'contradictions': 0, 'decisions': [], 'en_attente': []}
     try:
         texte = lire_texte(racine.joinpath(*BACKLOG_CONTRADICTIONS))['texte']
         trouve = True
@@ -755,6 +967,12 @@ def lire_backlog(dossier):
                 continue
             sujet = re.split(r'\s*:\s*\*\*', m.group(2), 1)[0]
             sujet = re.sub(r'\s*\((?:la )?contradictions?[^)]*\)', '', sujet).strip(' ,;:')
+            choix = gras.group(1).strip(' .')
+            if sujet and PAS_TRANCHEE.match(choix):
+                # « **pas tranchée** » says the opposite of a decision: it stays open (PM, 2026-11-20: it was listed under
+                # « Tranché »).
+                sortie['en_attente'].append({'sujet': couper(sujet, 200), 'date': _date_backlog(m.group(1)), 'note': couper(choix, 200)})
+                continue
             if sujet:
                 sortie['decisions'].append({'sujet': couper(sujet, 200), 'date': _date_backlog(m.group(1)),
                                             'choix': couper(gras.group(1).strip(' .'), 200)})
@@ -783,9 +1001,25 @@ def conflits_du_projet(dossier, metas=None, instantane=None, depuis_connecteur=F
     sortie = conflits_du_registre(dossier, metas, instantane, depuis_connecteur)
     d = dossier_normal(dossier)
     maintenant = time.time() if maintenant is None else maintenant
-    sortie.update(en_cours=[], sessions_actives=[], backlog=None)
+    sortie.update(en_cours=[], questions_session=[], sessions_actives=[], backlog=None, en_attente=[], repasse=None)
     try:
-        sortie['en_cours'] = questions_en_cours(d, metas, questions)
+        if sortie.get('lu') and sortie.get('dernier_passage'):
+            sortie['repasse'] = repasse_du_studio(d, sortie['dernier_passage'], maintenant, instantane)
+            if sortie['repasse'] and sortie['repasse']['due'] and not sortie.get('session'):
+                sortie['session_studio'] = session_du_studio(d, metas)[0]
+    except Exception:
+        sortie['repasse'] = None
+    try:
+        qs = questions_en_cours(d, metas, questions)
+        liens = associer_questions_aux_cas(qs, sortie.get('ouverts') or [])
+        for i, j in liens.items():
+            sortie['ouverts'][j]['posee'] = {'session': qs[i]['session'], 'session_titre': qs[i]['session_titre'],
+                                             'depuis': qs[i]['depuis']}
+        # What the PM still has to settle = the open register cases + the questions of the sessions that are not about
+        # a case, except a numbered steering question (« Q29 · Lancer la passe… »), which settles no conflict.
+        libres = [dict(q, compte=not _question_numerotee(q['question'])) for i, q in enumerate(qs) if i not in liens]
+        sortie['questions_session'] = libres
+        sortie['en_cours'] = libres   # alias of questions_session (the name before the single « À trancher » list)
         sortie['sessions_actives'] = [{'sessionId': m['id'], 'titre': m.get('titre') or '', 'activite': m.get('activite') or 0}
                                       for m in sessions_qui_tranchent(d, metas)
                                       if maintenant - (m.get('activite') or 0) <= TRI_ACTIF_S]
@@ -801,6 +1035,7 @@ def conflits_du_projet(dossier, metas=None, instantane=None, depuis_connecteur=F
             tous = sorted(sortie['journal'] + ajoutes, key=lambda x: _iso_du_passage(x.get('date')), reverse=True)
             sortie['journal'] = tous[:JOURNAL_CONFLITS]
             sortie['tranches'] += len(ajoutes)
+            sortie['en_attente'] = [dict(x, date=x.get('date') or '') for x in (b.get('en_attente') or [])][:50]
     except Exception:
         sortie['backlog'] = None
     return sortie
@@ -870,7 +1105,14 @@ def conflits_du_registre(dossier, metas=None, instantane=None, depuis_connecteur
                 titres = reg.titres_du_studio(d)
             except OSError:
                 titres = {}
-        sortie['tranches'] = len(tous)
+        # The cases the PM set aside from the journal stay in the register, never shown as conflicts (Q16, 23/11).
+        try:
+            garde = ((lire_instantane() if instantane is None else instantane).get(d) or {}).get('conflits_hors_journal')
+            hors = reg.hors_journal(d, garde) if hasattr(reg, 'hors_journal') else {}
+        except Exception:
+            hors = {}
+        tous = [x for x in tous if x['id'] not in hors]
+        sortie['tranches'], sortie['hors_journal'] = len(tous), len(hors)
         sortie['journal'] = [{'sujet': e(x['sujet']), 'date': x['date'], 'par': x['par'], 'choix': x['choix'],
                               'reponse': e(x['reponse']), 'reprise': x['ajoute_par'] == 'reprise'}
                              for x in tous[:JOURNAL_CONFLITS]]
@@ -950,6 +1192,10 @@ def relecture_du_studio(d, dernier_passage, instantane=None, maintenant=None):
     sujets = f"{n} sujet{'s' if n > 1 else ''} nouveau{'x' if n > 1 else ''}"
     dernier = f'Dernier passage complet : le {passage}.'
     etat = x.get('etat') if x else 'aucune'
+    # A pass the morning could not take (too large, failed) and a complete pass the same day: that pass came after it
+    # (the morning judged nothing), the Studio is up to date (2026-11-24: the catch-up of two real Studios at 8h).
+    if etat in ('trop', 'erreur') and _iso_du_passage(dernier_passage) >= le_iso:
+        etat = 'faite'
     if etat == 'ouverte':
         etat = 'faite' if _iso_du_passage(dernier_passage) >= le_iso else 'remise'
     if etat == 'rien':
@@ -979,8 +1225,9 @@ def relecture_du_studio(d, dernier_passage, instantane=None, maintenant=None):
 JOURNAL_CONFLITS = 60                 # settled cases shown in the tab, the most recent first
 ESTIMATION_S = 7 * 86400             # the cost of a first check is computed again after a week
 # The cost model of conflits.py the kept estimate was made with: an estimate of an older model is never shown (0.3.3:
-# the first relevé measured on a real Studio, 2026-11-18, replaced the 2026-11-10 model).
-ESTIMATION_BAREME = 2
+# the first relevé measured on a real Studio, 2026-11-18, replaced the 2026-11-10 model; 3: the batches judged by the
+# script's headless calls, measured 2026-11-23).
+ESTIMATION_BAREME = 3
 COLLER_VERIFIER = '/cockpit:conflits rattrapage'
 _estimation_faite = {'n': 0}          # one survey per computation at most: it reads the whole Studio (2 to 6 s)
 
@@ -1103,6 +1350,34 @@ def ligne_verifier_conflits(dossier, c, etat, maintenant, metas):
                                   f"colle-le, elle crée « {c['titre_session']} »." if sid else
                                   f" Ouvre une session dans le dossier du Studio et lance « {COLLER_VERIFIER} ».")
     return {'cle': cle, 'type': 'verifier', 'titre': titre, 'detail': couper(detail, 600), 'depuis': ligne['premiere'],
+            'session': sid, 'repli': repli, 'copier': copier, 'dossier': dossier}
+
+
+def ligne_repasse_conflits(dossier, c, etat, maintenant, metas):
+    """The line of a Studio whose last complete pass is older than its period, in « Ce qui t'attend », or None. Never
+    for a Studio never checked (ligne_verifier_conflits). Its key holds the pass date and the period index: closed by the
+    PM, it comes back after another period, and a new pass (new date) resets it."""
+    r = c.get('repasse')
+    if not r or not r.get('due') or not c.get('lu', True) or not c.get('dernier_passage'):
+        return None
+    cle = cle_de(dossier, 'conflits', 'repasse', c['dernier_passage'], r['jours'] // r['seuil'])
+    titre = 'Refaire une passe complète des conflits'
+    ligne = _noter(etat, cle, dossier, 'repasse', titre, maintenant)
+    if ligne['fermee']:
+        return None
+    ligne['vue'] = maintenant
+    if c.get('session'):
+        sid, repli, copier = c['session']['sessionId'], False, ''
+    else:
+        sid, repli = session_du_studio(dossier, metas)
+        copier = COLLER_VERIFIER if sid else ''
+    detail = (f"Dernier passage complet il y a {r['jours']} jours. L'ingestion signale les conflits au fil de l'eau, "
+              "mais pas tous : une passe complète rattrape le reste."
+              + (f" Dans la session « {c['titre_session']} »." if c.get('session') else
+                 f" Le bouton ouvre la session la plus récente du Studio, « {COLLER_VERIFIER} » copié : "
+                 f"colle-le, elle ouvre « {c['titre_session']} »." if sid else
+                 f" Ouvre une session dans le dossier du Studio et lance « {COLLER_VERIFIER} »."))
+    return {'cle': cle, 'type': 'repasse', 'titre': titre, 'detail': couper(detail, 600), 'depuis': ligne['premiere'],
             'session': sid, 'repli': repli, 'copier': copier, 'dossier': dossier}
 
 
@@ -1340,11 +1615,12 @@ def _noter(etat, cle, studio, type_, titre, premiere):
     return etat[cle]
 
 
-def lignes_du_studio(dossier, r, e, metas, etat, maintenant, debut, sources=None, reunions=None, regles=None):
+def lignes_du_studio(dossier, r, e, metas, etat, maintenant, debut, sources=None, reunions=None, regles=None, vu_avant=None):
     """Les lignes ouvertes d'un Studio, l'état mis à jour en passant. Une personne qui n'est pas PM n'a jamais
     de ligne « à toi » ni « reunion » : elles ne sont même pas notées. `reunions` : les réunions sans compte rendu du
     matin.json d'aujourd'hui pour ce Studio, ou None quand le point du jour n'est pas là (les lignes ouvertes restent).
-    `regles` : les points « Réglé » de ce matin.json (tous projets), qui ferment un « À toi » au même lien."""
+    `regles` : les points « Réglé » de ce matin.json (tous projets), qui ferment un « À toi » au même lien.
+    `vu_avant` : la dernière visite de la page avant aujourd'hui (None : inconnue, les entrées ne sont pas masquées)."""
     nom = unicodedata.normalize('NFC', parc.nom_projet(dossier))
     sid, repli = session_du_studio(dossier, metas)
     ouvertes = []
@@ -1380,6 +1656,8 @@ def lignes_du_studio(dossier, r, e, metas, etat, maintenant, debut, sources=None
         if t < debut:
             continue
         for x in entres:
+            if not entree_pour_info(x, t, debut, vu_avant):
+                continue
             corps, _, lien = decouper_puce(x)
             plat = texte_simple(corps)
             # « titre court : détail » (the ingestion kit, 2026-11-06), « titre: détail » too; never a URL's colon.
@@ -1456,7 +1734,11 @@ def lignes_du_studio(dossier, r, e, metas, etat, maintenant, debut, sources=None
                         ligne_sid, ligne_repli, origine = trouvee[0], False, {'origine_session': trouvee[1]}
                     else:
                         origine = {'origine_fichier': FICHIER_INGESTION}
-                ouvertes.append({'cle': cle, 'type': 'a_toi', 'titre': couper(resume) if resume else ligne['titre'],
+                # A title noted before 0.3.12 may end on « … » (cut at a word): its text gives it again, cut at a natural break.
+                titre = ligne['titre']
+                if titre.endswith('…') and ligne.get('texte'):
+                    titre = titre_court(ligne['texte'])
+                ouvertes.append({'cle': cle, 'type': 'a_toi', 'titre': couper(resume) if resume else titre,
                                  'texte': resume or texte, **priorite, **pm, **origine,
                                  'commande': commande_de(texte), 'detail': '',
                                  'passage': int(ligne['passage'] * 1000) if ligne.get('passage') else None,
@@ -1502,7 +1784,7 @@ def lignes_du_studio(dossier, r, e, metas, etat, maintenant, debut, sources=None
             ouvertes.append({'cle': cle, 'type': 'question', 'titre': couper(titre), 'detail': couper(detail, 400),
                              'depuis': l.get('depuis') or maintenant, 'session': session_de_ligne(l), 'repli': False,
                              'session_titre': l.get('session') or ''})
-    ouvertes.sort(key=lambda x: (ORDRE_TYPES[x['type']], x.get('echeance') or '9999-12-31', x['depuis']))
+    ouvertes.sort(key=lambda x: ordre_ligne(x, maintenant))
     return nom, ouvertes
 
 
@@ -1515,6 +1797,21 @@ def _cle_a_toi_migree(etat, dossier, texte):
     return cle
 
 
+def ordre_ligne(l, maintenant):
+    """The order of the board, for the lists of the morning point (PM, Q8, 2026-11-26): a close or late deadline first,
+    the oldest due date first; then the most recent line first. An entry (information, nothing waits) comes last.
+    (rank, due date, minus the age): compared as a tuple."""
+    if l.get('type') == 'entree':
+        return (2, '', -l['depuis'])
+    try:
+        jours = (dt.date.fromisoformat(l['echeance']) - dt.date.fromtimestamp(maintenant)).days
+    except (KeyError, TypeError, ValueError):
+        jours = None
+    if jours is not None and jours <= parc.ECHEANCE_JOURS:
+        return (0, l['echeance'], -l['depuis'])
+    return (1, '', -l['depuis'])
+
+
 def priorite_a_toi(ligne, texte, maintenant):
     """{'impact', 'raison', 'effort'} of a request (parc.priorite): what the ingestion said of it, else the rules."""
     jour, ts, proche = dt.date.fromtimestamp(maintenant), None, False
@@ -1524,7 +1821,7 @@ def priorite_a_toi(ligne, texte, maintenant):
         d = None
     if d:
         ts, proche = dt.datetime.combine(d, dt.time(12)).timestamp(), 0 <= (d - jour).days <= parc.ECHEANCE_JOURS
-    return parc.priorite(texte, maintenant, ligne.get('dit'), ts, proche, demande=True)
+    return parc.priorite(texte, maintenant, ligne.get('dit'), ts, proche, demande=True, depuis=ligne.get('premiere'))
 
 
 def a_toi_ancienne(ligne, maintenant, priorite=None):
@@ -1536,7 +1833,12 @@ def a_toi_ancienne(ligne, maintenant, priorite=None):
         return False
     if ligne.get('echeance') and ligne['echeance'] >= dt.date.fromtimestamp(maintenant).isoformat():
         return False
-    return maintenant - (ligne.get('premiere') or maintenant) > ANCIENNE_A_TOI_S
+    age = maintenant - (ligne.get('premiere') or maintenant)
+    # « Prénom attend » past its 7 days (parc.PRENOM_ATTEND_S) leaves « D'abord » for « Ensuite », not for « Anciennes »
+    # (PM, Q5, 2026-11-25), and says « Prénom attend depuis N j »; after 21 days it is old like the others.
+    if p.get('attend_nom') and age <= ANCIENNE_A_TOI_S * 3:
+        return False
+    return age > ANCIENNE_A_TOI_S
 
 
 def _charger_question():
@@ -1598,7 +1900,7 @@ def ingestion_du_matin(liste, maintenant):
     """La partie ingestion de l'onglet du matin, calculée sans LLM depuis la liste par projet (`calculer`) : les entrées
     au Studio (tous les projets) et les nouvelles demandes « À toi » (projets où la personne est PM, la liste n'en a pas
     d'autres) dont le passage date d'après minuit du dernier jour ouvré, encore ouvertes. Échéance la plus proche
-    d'abord, puis la plus ancienne. Rien quand la liste manque (son calcul a échoué)."""
+    d'abord, puis la plus récente (l'ordre du tableau). Rien quand la liste manque (son calcul a échoué)."""
     debut = debut_fenetre(maintenant) * 1000
     entre, demandes = [], []
     moi = identite()
@@ -1622,7 +1924,7 @@ def ingestion_du_matin(liste, maintenant):
                 demandes.append({'cle': l['cle'], 'titre': l['titre'], 'projet': p['nom'], 'echeance': l.get('echeance'),
                                  'lien': l.get('lien') or '', 'dossier': p['dossier'], 'depuis': l['depuis'],
                                  'session': l.get('session'), 'repli': l.get('repli')})
-    demandes.sort(key=lambda x: (x['echeance'] or '9999-12-31', x['depuis']))
+    demandes.sort(key=lambda x: ordre_ligne(dict(x, depuis=x['depuis'] / 1000), maintenant))
     return entre, demandes
 
 
@@ -1786,7 +2088,7 @@ def fait_matin(cle, maintenant=None):
     return _charger_matin().fait(cle, maintenant)
 
 
-def calculer(e=None, maintenant=None, metas=None, ecrire=True, depuis_connecteur=False):
+def calculer(e=None, maintenant=None, metas=None, ecrire=True, depuis_connecteur=False, vu_avant=None):
     """Tout le calcul : les Studios, leurs lignes, l'état mis à jour, projets.json et projets.md écrits (sauf
     ecrire=False). Rend ce que projets.json contient : ce que la personne qui regarde a le droit de voir, rien d'autre."""
     maintenant = time.time() if maintenant is None else maintenant
@@ -1812,25 +2114,28 @@ def calculer(e=None, maintenant=None, metas=None, ecrire=True, depuis_connecteur
         s = lues[d] = sources_du_studio(d, maintenant, instantane)
         cites = fichiers_cites_au_tableau(e, d) if not depuis_connecteur and 'fichiers' in s else []
         if cites:   # the snapshot keeps them too: the connector cannot read the Drive
-            s['fichiers'] = textes_des_entrees(d, s['passages'], maintenant, cites)
+            s['fichiers'] = textes_des_entrees(d, s['passages'], maintenant, cites, vu_avant)
         if ecrire:
             regler_questions(s['reglees'])
         r = role(d, qui, s['pm'])
         nom, ouvertes = lignes_du_studio(d, r, e, metas, etat, maintenant, debut, s,
                                          None if reunions is None else reunions.get(normaliser(unicodedata.normalize('NFC', parc.nom_projet(d))), []),
-                                         regles)
+                                         regles, vu_avant)
         if r == 'pm':
             try:
                 qs = _lignes_du_projet(e.get('tableau'), d)
                 c = conflits_du_projet(d, metas, instantane, questions=qs)
                 relance = ligne_relance_conflits(d, metas, maintenant, instantane, c, qs)
                 verifier = ligne_verifier_conflits(d, c, etat, maintenant, metas)
+                repasse = ligne_repasse_conflits(d, c, etat, maintenant, metas)
             except Exception:
-                relance = verifier = None   # a failure costs only these lines
+                relance = verifier = repasse = None   # a failure costs only these lines
             if relance:
                 ouvertes.append(relance)
             if verifier:
                 ouvertes.append(verifier)
+            if repasse:
+                ouvertes.append(repasse)
         vu = {'nom': nom, 'dossier': d, 'role': r}
         if s.get('instantane'):
             vu['lu'] = int((s.get('lu') or 0) * 1000)   # lu par le dernier calcul hors du connecteur, à cette heure
@@ -1844,7 +2149,7 @@ def calculer(e=None, maintenant=None, metas=None, ecrire=True, depuis_connecteur
             if ligne['type'] == 'question' and not ligne['fermee'] and cle not in presentes:
                 ligne.update(fermee=maintenant, par='source')
     # Un « À toi » fermé reste tant que son passage est lu (14 jours) : sinon le passage le noterait de nouveau, ouvert.
-    for cle in [k for k, l in etat.items() if l['type'] != 'verifier' and (l['fermee'] and maintenant - l['fermee'] > PURGE_S
+    for cle in [k for k, l in etat.items() if l['type'] not in ('verifier', 'repasse') and (l['fermee'] and maintenant - l['fermee'] > PURGE_S
                                                  and (l['type'] != 'a_toi' or maintenant - max(l.get('passage') or 0, l.get('premiere') or 0) > LECTURE_S))
                 or (l['type'] == 'entree' and maintenant - (l.get('premiere') or 0) > PURGE_S)]:
         del etat[cle]
@@ -1870,7 +2175,13 @@ def calculer(e=None, maintenant=None, metas=None, ecrire=True, depuis_connecteur
         p['fermees_titres'] = [couper(l['titre'], 80) + (f" ({l['preuve']})" if l.get('preuve') else '')
                                for l in fermees[:FERMEES_MONTREES]]
     projets = [p for p in projets if p['lignes'] or p['fermees_depuis_hier']]
-    projets.sort(key=lambda p: (not any(l['type'] != 'entree' for l in p['lignes']), p['nom'].lower()))
+    # The projects as the board orders its Studios (PM, Q8, 2026-11-26): the most urgent line first, then the most recent
+    # of the lines of that urgency; a project with nothing but entries (or nothing open) after the others.
+    def rang_projet(p):
+        rangs = [ordre_ligne(l, maintenant) for l in p['lignes']]
+        urgence = min((r[0] for r in rangs), default=3)
+        return (urgence, min((r[2] for r in rangs if r[0] == urgence), default=0), p['nom'].lower())
+    projets.sort(key=rang_projet)
     sortie = {'genere': int(maintenant * 1000), 'page': page_mon_studio(), 'studios': connus,
               'projets': [dict(p, lignes=[dict(l, depuis=int(l['depuis'] * 1000)) for l in p['lignes']])
                           for p in projets]}
@@ -2002,10 +2313,10 @@ def couts_des_etapes():
 
 def etape_matin(cout):
     return {'cle': 'etape-matin', 'etape': 'matin', 'titre': 'Mettre en route le point du matin', 'cout': cout,
-            'note': 'La passe des conflits du lundi en dépend.',
+            'note': 'La passe quotidienne des conflits en dépend.',
             'detail': "Chaque jour ouvré à 7h30, une tâche lit tes mails, Slack et ton agenda et remplit l'onglet "
-                      "« Today » ; une vérification range dans la journée ce qui a eu sa réponse. Le lundi, la même tâche "
-                      "relit les conflits nouveaux de tes Studios sans ingestion automatique : sans elle, cette passe ne "
+                      "« Today » ; une vérification range dans la journée ce qui a eu sa réponse. Chaque matin, la même tâche "
+                      "relit les conflits nouveaux de tes Studios, ingestion automatique ou non : sans elle, cette passe ne "
                       "se fait pas. Le bouton copie « " + ETAPE_COMMANDE['matin'] + " » : colle-le dans une nouvelle "
                       "session (Cmd+N), Claude te dit ce qu'il pose et ce que ça coûte, puis attend ton go. Environ "
                       "5 minutes.",

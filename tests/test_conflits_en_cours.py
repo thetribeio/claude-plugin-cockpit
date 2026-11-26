@@ -158,6 +158,18 @@ class EnCours(Base):
         self.assertEqual((sans, [(x['nom'], x['en_cours']) for x in avec]), ([], [('Projet Alpha', 1)]))
 
 
+class UneTache(Base):
+    def test_a_task_line_shows_its_subject_never_its_instruction(self):
+        # PM, 2026-11-20: under « En cours » the title was « Nouvelle session sur le dossier Studio, coller le prompt
+        # donné dans la session… », the instruction (`detail`) of a task line, not its subject.
+        tache = {'type': 'task', 'titre': None, 'affiche_titre': '', 'affiche_suite': 'Q29 · Alpha · Conflits : Lancer la passe',
+                 'complet': 'Q29 · Alpha · Conflits : Lancer la passe', 'detail': 'Nouvelle session sur le dossier Studio, coller le prompt.',
+                 'session': 'x', 'source': TRI, 'projet': self.d, 'depuis': self.maintenant - 300}
+        r = self.onglet(questions=[tache])['en_cours']
+        self.assertEqual([x['question'] for x in r], ['Q29 · Alpha · Conflits : Lancer la passe'])
+        self.assertNotIn('coller le prompt', str(r))
+
+
 class Backlog(Base):
     def test_the_survey_and_the_decisions_are_counted_and_the_decisions_join_the_journal(self):
         self.ecrire('backlog/_contexte/contradictions.md', CONTRADICTIONS)
@@ -170,6 +182,15 @@ class Backlog(Base):
         self.assertEqual(c['journal'][1]['sujet'], 'Bloc « Derniers RDV » : côté mentor')
         self.assertEqual(c['journal'][1]['choix'], 'penchant de Sam, à confirmer')
         self.assertNotIn('contradiction', c['journal'][1]['sujet'])
+
+    def test_a_decision_marked_not_settled_stays_open_and_is_not_in_the_journal(self):
+        # PM, 2026-11-20: « Présentation en cinq cartes : **pas tranchée** » was listed under « Tranché ».
+        self.ecrire('backlog/_contexte/decisions-pm.md', DECISIONS + "4. 2026-11-19 · Présentation en cinq cartes (contradiction 43) : **pas tranchée**. Suite : voir.\n")
+        c = self.onglet()
+        self.assertEqual(c['backlog']['decisions'], 2)
+        self.assertEqual([x['sujet'] for x in c['en_attente']], ['Présentation en cinq cartes'])
+        self.assertEqual(c['en_attente'][0]['date'], '19/11/2026')
+        self.assertNotIn('Présentation en cinq cartes', [x['sujet'] for x in c['journal']])
 
     def test_a_garbage_decisions_file_never_raises(self):
         self.ecrire('backlog/_contexte/decisions-pm.md', '\x00\x01 ?! ** ** \n1. · · **\n\n9. 2026-13-99 · **\n' + 'é' * 10)
@@ -233,17 +254,25 @@ class Page(unittest.TestCase):
                        'session_titre': 'Alpha · Nettoyage du contexte backlog', 'depuis': 1}])
         html = sortie['projetConflits']
         self.assertIn('<strong>Dernier passage complet le 09/11</strong> · Contradictions du backlog relevées le 10/11 (41), '
-                      '3 tranchées · Tri en cours dans « Alpha · Nettoyage du contexte backlog » · 1 question ouverte', html)
+                      '3 tranchées · Tri en cours dans « Alpha · Nettoyage du contexte backlog » · 1 question de la session', html)
         self.assertNotIn('lundi', html.lower())
         self.assertNotIn('à jour', html)
         self.assertNotIn('Pas encore de session', html)
+
+    def test_a_case_not_settled_is_listed_as_not_settled_not_under_tranche(self):
+        html = self.run_page(en_attente=[{'sujet': 'Présentation en cinq cartes', 'date': '19/11/2026', 'note': 'pas tranchée'}],
+                             journal=[], tranches=0)['projetConflits']
+        self.assertIn('<h3>Pas encore tranché</h3>', html)
+        self.assertIn('<strong>Présentation en cinq cartes</strong>', html)
+        self.assertNotIn('<h3>Tranché</h3>', html)
+        self.assertNotIn('Aucun conflit', html)
 
     def test_the_open_question_has_its_text_options_and_a_button_to_its_session(self):
         html = self.run_page(
             en_cours=[{'question': 'Compte archivé ?', 'options': 'Écran d’attente · Historique', 'session': TRI,
                        'session_titre': 'Alpha · Nettoyage', 'depuis': 1}],
             sessions_actives=[{'sessionId': TRI, 'titre': 'Alpha · Nettoyage', 'activite': 1}])['projetConflits']
-        self.assertIn('<h3>En cours</h3>', html)
+        self.assertIn('<h3>Questions de la session</h3>', html)
         self.assertIn('<strong>Compte archivé ?</strong>', html)
         self.assertIn('<small>Écran d’attente · Historique</small>', html)
         self.assertIn('data-sid="' + TRI + '"', html)

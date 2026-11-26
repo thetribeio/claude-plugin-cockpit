@@ -66,10 +66,13 @@ td.action code { font:14px var(--f-mono); background:var(--soft); padding:0 4px;
 td.type, td.quand { text-align:right; white-space:nowrap; width:1% }
 /* « Agir » stays narrow (PM, 2026-11-17): « Fait / Retirer du tableau » under the other gestures, the answer buttons
    wrap, a long « … (recommandé) » goes on two lines rather than squeezing what the line asks. */
-td.type { white-space:normal; min-width:150px; max-width:260px }
-td.type button.fait { display:block; width:max-content; margin:6px 0 0 auto }
-td.type button.decide.choix { white-space:normal; text-align:left; max-width:240px }
-td.type button.ouvrir.sous { display:block; width:max-content; margin:6px 0 0 auto }
+td.type { white-space:nowrap }
+td.type .gestes { display:flex; flex-wrap:nowrap; justify-content:flex-end; align-items:center; gap:6px }
+td.type .gestes > * { margin:0 !important }
+td.type .gestes button.fait[data-plus-tard], td.type .gestes button.fait[data-retirer], td.type .gestes button.fait[data-abandonner], td.type .gestes button.reclasser { display:inline-flex; align-items:center; justify-content:center; padding:4px 6px; line-height:0 }
+td.type .gestes button.fait[data-retirer]:hover { color:var(--done); border-color:var(--done) }
+td.action .reponses { justify-content:flex-start; margin-top:8px }
+td.action button.decide.choix { white-space:normal; text-align:left; max-width:340px }
 button.act.ouvrir { color:var(--gray) }
 tr.groupe-projet td { padding-top:12px; font-weight:600 }
 tr.groupe-projet button { margin-left:10px }
@@ -79,7 +82,7 @@ dl.fiche dd { margin:0 }
 dl.fiche .envoi { color:var(--muted); font-size:14px; margin-top:2px }
 td.deplie p.question { margin:0 }
 td.deplie ol.options { margin:0; padding-left:22px; display:grid; gap:3px }
-.pour-reunion { font-weight:600; color:var(--decide); margin-left:4px }
+.pour-reunion { font:inherit; font-weight:600; color:var(--decide); margin-left:4px; background:none; border:0; padding:0; cursor:pointer; text-decoration:underline }
 .chip { font:600 14px var(--f-body); letter-spacing:.03em; border-radius:4px; padding:1px 7px; border:1px solid currentColor; white-space:nowrap }
 .k-go { color:var(--risk) } .k-decision { color:var(--decide) } .k-review { color:var(--wait) } .k-task { color:var(--gray) }
 button.act, a.act { font:600 14px var(--f-body); background:var(--panel); cursor:pointer; padding:3px 10px; border-radius:5px; border:1.5px solid currentColor; white-space:nowrap }
@@ -165,7 +168,8 @@ button.replier .fleche { display:inline-block; transition:transform .15s } butto
 td.type button.reclasser { display:block; width:max-content; margin:6px 0 0 auto }
 button.reclasser { padding:1px 7px; border:1px solid var(--line); border-radius:4px; background:none; color:var(--muted); font:inherit; font-size:13px; cursor:pointer }
 button.reclasser:hover, button.reclasser:focus-visible { color:var(--ink); border-color:var(--muted) }
-tr.bande-titre td { font:600 15px var(--f-body); padding-top:18px; padding-bottom:6px; border-bottom:1px solid var(--line, #e5e7eb) }
+/* The three band headers (« D'abord », « Ensuite », « Peut attendre ») use the h2 style (PM, 2026-11-19: the first two were smaller). */
+tr.bande-titre td { font-family:var(--f-display); font-size:22px; font-weight:600; line-height:1.2; letter-spacing:.01em; padding-top:18px; padding-bottom:6px; border-bottom:1px solid var(--line, #e5e7eb) }
 tr.bande-titre .n { color:var(--muted); font-weight:500 }
 .marque-ancienne { font:500 13px var(--f-body); color:var(--muted); background:var(--soft); border-radius:999px; padding:1px 8px; margin-right:6px; white-space:nowrap }
 .journal .quand { font:500 14px var(--f-mono); color:var(--muted); margin-right:8px }
@@ -246,8 +250,13 @@ button.fait[disabled] { opacity:.5; cursor:default }
 #bloc-matin .tete-groupe .n { font-weight:400; color:var(--muted) }
 #bloc-matin li.entree .quoi { cursor:pointer; font-weight:400 }
 #bloc-matin li.entree .quoi .titre { font-weight:500 }
+textarea.demande-ranger { width:100%; box-sizing:border-box; font:14px var(--f-mono); background:var(--soft); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:10px 12px; resize:vertical }
 #bloc-matin .lu { grid-column:1 / -1; background:var(--soft); border-radius:8px; padding:10px 14px; font-size:15px; overflow-wrap:anywhere; max-height:60vh; overflow:auto }
 #bloc-matin .lu h4 { font:600 16px var(--f-display); margin:10px 0 4px } #bloc-matin .lu p { margin:6px 0 }
+/* The bullets of a file read in the page are plain list items. Without this, « #bloc-matin ul.liste li » (a grid of
+   two columns, made for the rows of the page) also matched them: « <strong>09:41, Ana</strong> : text » became two grid
+   cells and the bold part, in the narrow first column, wrapped one character per line (PM, 2026-11-20). */
+#bloc-matin ul.liste .lu li, #bloc-mise-en-route ul.liste .lu li { display:list-item; padding:2px 0; border-top:0; background:none }
 #bloc-matin .lu ul, #bloc-matin .lu ol { margin:4px 0; padding-left:20px } #bloc-matin .lu pre { white-space:pre-wrap; font:14px var(--f-mono) }
 tr.surligne td { background:var(--soft); box-shadow:inset 3px 0 0 var(--accent) }
 tr.retiree td { background:var(--soft); color:var(--muted) }
@@ -495,6 +504,23 @@ tr.retiree .titre { text-decoration:line-through }
     var t = motsDe(texte), titre = motsDe([l.question, l.affiche_titre, l.affiche_suite].filter(Boolean).join(" "));
     return !!t && titre.indexOf(t) < 0;
   }
+  // The unfold never repeats the title (PM, 2026-11-19): what the text says beyond its title, or nothing when the title
+  // already says it all. The title is matched letter by letter, punctuation, spaces and a closing « … » aside; a text
+  // that does not start with its title stays whole.
+  function lettre(c) { return /[a-z0-9à-ÿœ]/i.test(c); }
+  function resteApresTitre(texte, l) {
+    texte = String(texte || "").trim();
+    var titre = l.a_toi ? String(l.affiche_suite || "") : String(l.affiche_titre || "") + " " + String(l.affiche_suite || "");
+    var i = 0, j = 0;
+    while (j < titre.length) {
+      if (!lettre(titre[j])) { j++; continue; }
+      while (i < texte.length && !lettre(texte[i])) i++;
+      if (i >= texte.length || texte[i].toLowerCase() !== titre[j].toLowerCase()) return texte;
+      i++; j++;
+    }
+    var reste = texte.slice(i).replace(/^[\s:·—–,;.…)\-]+/, "");
+    return lettre(reste.replace(/[^a-z0-9à-ÿœ]/gi, "")[0] || "") ? reste : "";
+  }
   function sansTitre(t, l) {
     var titre = String(l.affiche_titre || "").replace(/\s*…$/, ""); t = String(t || "").trim();
     return titre && t.indexOf(titre) === 0 ? t.slice(titre.length).replace(/^[\s:·—–-]+/, "") : t;
@@ -513,6 +539,7 @@ tr.retiree .titre { text-decoration:line-through }
     if (q.pourquoi) rangs.push(["Pourquoi", md(q.pourquoi)]);
     if (q.attendu) rangs.push(["Ce qu'on attend de toi", md(q.attendu)]);
     if (q.sinon) rangs.push(["Si tu ne fais rien", md(q.sinon)]);
+    if (q.piece) rangs.push(["Pièce", '<a class="act" href="' + esc(q.piece) + '" target="_blank" rel="noopener noreferrer">Ouvrir le document ↗</a>']);
     if ((q.fichiers || []).length) rangs.push([q.fichiers.length > 1 ? "Pièces" : "Pièce", '<ul class="fichiers">' + q.fichiers.map(function (c) {
       return "<li><code>" + esc(c) + "</code> " + gesteFichier(l, l.dossier, c) + rendreLu({ cle: cleFichier(l, c) }) + "</li>";
     }).join("") + "</ul>"]);
@@ -541,10 +568,9 @@ tr.retiree .titre { text-decoration:line-through }
     if (/^https:\/\/([a-z0-9-]+\.)*slack\.com\//i.test(l.lien_source || "")) {
       if (l.commande) parts.push("<p>À taper dans une session du Studio : <code>" + esc(l.commande) + "</code></p>");
       return parts.join("") + "<dl><dt>Source</dt><dd>" + esc(quiDemande({ auteur: l.auteur, canal: l.canal, lien: l.lien_source, origine_session: l.origine_session, origine_fichier: l.origine_fichier })) +
-        (l.passage ? ", relevé le " + esc(dateCourte(l.passage)) : "") + ' · <a href="' + esc(l.lien_source) +
-        '" target="_blank" rel="noopener noreferrer">Ouvrir le message ↗</a></dd></dl>';
+        (l.passage ? ", relevé le " + esc(dateCourte(l.passage)) : "") + " · " + lienSlack(l.lien_source, "Ouvrir le message ↗") + "</dd></dl>";
     }
-    if (l.texte && l.texte !== l.affiche_suite) parts.push("<div>" + md(l.texte) + "</div>");
+    if (l.texte && l.texte !== l.affiche_suite && resteApresTitre(l.texte, l)) parts.push("<div>" + md(resteApresTitre(l.texte, l)) + "</div>");
     if (l.commande) parts.push("<p>À taper dans une session du Studio : <code>" + esc(l.commande) + "</code></p>");
     if (fichier) parts.push("<p>Fichier lié : <code>" + esc(fichier) + "</code></p>" + rendreLu({ cle: cleFichier(l, fichier) }));
     var mail = estMail(l);
@@ -558,12 +584,15 @@ tr.retiree .titre { text-decoration:line-through }
   // A line without number unfolds to short bullets: what its session expects of the PM (PM, 2026-11-06).
   function detail(l) {
     if (l.a_toi) return detailAToi(l);
-    var puces = Array.isArray(l.puces) && l.puces.length ? '<ul class="attendu">' + l.puces.map(function (p) { return "<li>" + md(p) + "</li>"; }).join("") + "</ul>" : "";
-    var corps = l.depli ? depliQuestion(l) + (l.detail && l.detail !== l.complet && l.detail !== l.depli.enonce && ajouteAuTitre(l.detail, l) ? "<div>" + md(l.detail) + "</div>" : "")
-      : puces || (l.detail && ajouteAuTitre(l.detail, l) ? "<div>" + md(l.detail) + "</div>" : "");
+    // A bullet that opens on the title says only what follows it (PM, 2026-11-19); one the title says whole is not shown.
+    var lesPuces = Array.isArray(l.puces) ? l.puces.map(function (p) { return resteApresTitre(p, l); }).filter(Boolean) : [];
+    var puces = lesPuces.length ? '<ul class="attendu">' + lesPuces.map(function (p) { return "<li>" + md(p) + "</li>"; }).join("") + "</ul>" : "";
+    var reste = function (t) { return t && ajouteAuTitre(t, l) ? resteApresTitre(t, l) : ""; };
+    var corps = l.depli ? depliQuestion(l) + (l.detail && l.detail !== l.complet && l.detail !== l.depli.enonce && reste(l.detail) ? "<div>" + md(reste(l.detail)) + "</div>" : "")
+      : puces || (reste(l.detail) ? "<div>" + md(reste(l.detail)) + "</div>" : "");
     // Every line opens on click (PM, 2026-11-18): at least its whole sentence when the row cut it, then where it came
     // from and when.
-    if (!corps && l.complet && ajouteAuTitre(l.complet, l)) corps = "<div>" + md(l.complet) + "</div>";
+    if (!corps && reste(l.complet)) corps = "<div>" + md(reste(l.complet)) + "</div>";
     return corps + "<dl>" +
       (l.declencheur && !puces && !l.depli ? "<dt>Déclencheur</dt><dd>" + md(l.declencheur) + "</dd>" : "") +
       "<dt>Apparue</dt><dd>" + esc(dateLongue(l.depuis)) + "</dd>" +
@@ -618,7 +647,7 @@ tr.retiree .titre { text-decoration:line-through }
           texte: l.texte || l.titre, commande: l.commande || "", passage: l.passage || null, depuis: l.depuis, echeance: ech,
           proche: ech !== null && (ech - aujourdhui.getTime()) / 86400000 < 4, a_toi: true, lien_source: l.lien || "", auteur: l.auteur || "", canal: l.canal || "", origine_session: l.origine_session || "", origine_fichier: l.origine_fichier || "", dossier: p.dossier,
           mail: !!l.mail, recu: l.recu || "", ech_iso: l.echeance || "", ech_mode: l.echeance_mode || "", ech_regle: l.echeance_regle || "",
-          projet: p.dossier, tri: l.echeance || "9999-12-31", impact: l.impact || "normal", raison: l.raison || "", effort: l.effort || "" };
+          projet: p.dossier, tri: l.echeance || "9999-12-31", impact: l.impact || "normal", raison: l.raison || "", effort: l.effort || "", attend_nom: l.attend_nom || "" };
         if (l.reclassee) { r.reclassee = l.reclassee; r.calcul = l.calcul || null; }
         (l.ancienne ? out.anciennes : out.fraiches).push(r);
       });
@@ -672,22 +701,65 @@ tr.retiree .titre { text-decoration:line-through }
     return Object.assign({}, l, { impact: x.vers === "dabord" ? "fort" : "normal", raison: CLASSE_PAR_TOI, reclassee: x.vers,
       calcul: l.calcul || { impact: l.impact, raison: l.raison || "", effort: l.effort || "" } });
   }
+  // Why a line is in « D'abord » (PM, 2026-11-19): the reason the connector computed (parc.priorite), always one chip,
+  // never empty. A line that arrives without it (an older connector, the unfold of a stored line) gets it from what it
+  // carries: its due date, the session that stopped or waits.
+  function raisonDeLigne(l) {
+    if (l.raison) return l.raison;
+    if (l.arret === "authorization" || l.arret === "autorisation_a_rouvrir") return "attend une autorisation";
+    if (l.arret === "error") return "arrêtée sur une erreur";
+    if (l.arret) return "arrêtée en plein travail";
+    if (l.bloque) return "une session attend";
+    if (l.echeance || l.ech_iso) return "échéance " + dateCourteJour(l.ech_iso || l.echeance);
+    return "à traiter d'abord";
+  }
+  function dateCourteJour(e) {
+    var t = typeof e === "string" ? jourEcheance(e) : e;
+    return t === null || isNaN(t) ? "proche" : new Date(t).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
+  }
   // The three bands of the board, from what each line carries (impact, effort): no judgement here.
   function bandesDuTableau(demandesFraiches, lignes) {
     // A scheduled pass stopped on its way (en_tete: the morning point not written, an authorization nobody gave) leads
     // « D'abord » (PM, 2026-11-17: the app marks it « réussie »); then the short answers.
-    var tout = demandesFraiches.concat(lignes).map(selonLePm), court = function (l) { return (l.en_tete ? 0 : 2) + (l.effort === "court" ? 0 : 1); };
-    var stable = function (liste, cle) {
-      return liste.map(function (l, i) { return { l: l, i: i }; }).sort(function (a, b) { return (cle(a.l) - cle(b.l)) || a.i - b.i; }).map(function (x) { return x.l; });
-    };
+    var tout = demandesFraiches.concat(lignes).map(selonLePm);
     // A line with no movement for 21 days leaves the main board for « Peut attendre » (PM, 2026-11-17), whatever its
     // impact; an old line brought up because nothing recent waits (remontee) keeps its place.
     // What the PM put first stays in « D'abord », however old (switch « reclassement »).
     var attend = function (l) { return l.reclassee !== "dabord" && (l.impact === "faible" || vieille(l)); };
-    return { dabord: stable(tout.filter(function (l) { return !attend(l) && l.impact === "fort"; }), court),
+    return { dabord: ordreDabord(tout.filter(function (l) { return !attend(l) && l.impact === "fort"; })),
       // « Ensuite » : one order for every line, whatever the folder (PM, 2026-11-19, Q2 and Q3).
       ensuite: ordreEnsuite(tout.filter(function (l) { return !attend(l) && l.impact !== "fort"; })),
       attendre: tout.filter(attend) };
+  }
+  // The order of « D'abord » (PM, Q6, 2026-11-25), the same everywhere (Mon Studio, project view): the scheduled passes
+  // stopped on their way (en_tete) first; then the lines past their due date, the oldest due date first; then the due
+  // dates, the nearest first; then every other strong line (a session that waits, « Prénom attend », a word), the most
+  // recent first. A due date of unknown origin counts all the same (the line says so, see raisonAffichee). Equal: the
+  // short answers, then the order the lines came in.
+  function ordreDabord(liste) {
+    var debut = new Date(); debut.setHours(0, 0, 0, 0); debut = debut.getTime();
+    var groupe = function (l) { return l.en_tete ? 0 : !l.echeance ? 3 : l.echeance < debut ? 1 : 2; };
+    return liste.map(function (l, i) { return { l: l, i: i, g: groupe(l) }; }).sort(function (x, y) {
+      var a = x.l, b = y.l;
+      if (x.g !== y.g) return x.g - y.g;
+      if (x.g === 1 || x.g === 2) { if (a.echeance !== b.echeance) return a.echeance - b.echeance; }
+      if (x.g === 3) { var d = (b.recente || b.depuis || 0) - (a.recente || a.depuis || 0); if (d) return d; }
+      return ((a.effort === "court" ? 0 : 1) - (b.effort === "court" ? 0 : 1)) || x.i - y.i;
+    }).map(function (x) { return x.l; });
+  }
+  // « échéance JJ/MM · origine inconnue » (PM, Q6): the kit of the ingestion does not write where a due date comes from
+  // yet (`echeance_mode` empty): the date counts, and the line says it does not know where it comes from.
+  function origineEcheanceInconnue(l) { return !!(l.a_toi && l.ech_iso && !l.ech_mode); }
+  function raisonAffichee(l) {
+    var r = raisonDeLigne(l);
+    if (!origineEcheanceInconnue(l)) return r;
+    var e = "échéance " + dateCourteJour(l.ech_iso) + " · origine inconnue";
+    return /^échéance \d/.test(r) ? e : r + " · " + e;
+  }
+  // « Prénom attend depuis N j » (PM, Q5): a wait older than 7 days no longer puts the line in « D'abord », but stays said.
+  function attendDepuis(l) {
+    if (!l.attend_nom || !l.depuis) return "";
+    return l.attend_nom + " attend depuis " + Math.max(7, Math.floor((Date.now() - l.depuis) / 86400000)) + " j";
   }
   // The order of « Ensuite » (PM, 2026-11-19): the server's order of the board (parc.py, lignes_et_anciennes), with the
   // ingestion's requests (« À toi ») placed in the block of their Studio instead of all on top. Studios: the most urgent
@@ -753,7 +825,8 @@ tr.retiree .titre { text-decoration:line-through }
       lignes = etat.vue.questions || [];
     }
     var n = bandesDuTableau(fraiches, lignes.filter(pasRetiree).filter(horsBandeL)).dabord.length;
-    $("compte").textContent = n ? n + " à faire d'abord" : "Rien ne presse";
+    // Says what it counts (PM, 2026-11-20: « 10 à faire d'abord » beside Today's « 1 à traiter » read as one figure).
+    $("compte").textContent = n ? n + " à faire d'abord " + (etat.projet ? "dans ce projet" : "au tableau") : "Rien ne presse";
     $("compte").title = "Les lignes de « D'abord » : échéance proche ou dépassée, quelqu'un ou une session qui attend, un blocage";
   }
 
@@ -856,12 +929,13 @@ tr.retiree .titre { text-decoration:line-through }
       // The same question relayed by another session (aussi_dans, parc.py): said once, when the match is not sure.
       if (l.aussi_dans) quoi += '<span class="apres"> · aussi dans ' + esc(l.aussi_dans) + "</span>";
       // Why a line comes first (PM, 2026-11-17), in a few words; « réponse courte » when one click or one word settles it.
-      if (l.impact === "fort") quoi = (l.raison ? '<span class="raison">' + esc(l.raison) + "</span>" : "") +
+      if (l.impact === "fort") quoi = '<span class="raison">' + esc(raisonAffichee(l)) + "</span>" +
         (l.effort === "court" ? '<span class="raison court">réponse courte</span>' : l.effort === "long" ? '<span class="raison court">long</span>' : "") + quoi;
+      if (attendDepuis(l) && l.impact !== "fort") quoi = '<span class="raison court">' + esc(attendDepuis(l)) + "</span>" + quoi;
       if (l.reclassee && l.impact !== "fort") quoi = '<span class="raison court">' + CLASSE_PAR_TOI + "</span>" + quoi;
       if (l.remontee) quoi = '<span class="marque-ancienne">ancienne</span>' + quoi;
       if (l.apres) quoi += '<span class="apres"> · après ' + esc(l.apres) + "</span>";
-      if (l.bloque) quoi += '<span class="apres"> · une session attend</span>';
+      if (l.bloque && !(l.impact === "fort" && raisonDeLigne(l) === "une session attend")) quoi += '<span class="apres"> · une session attend</span>';
       if (l.reglee) quoi += '<span class="apres"> · réglée dans la session, à confirmer</span>';  // the foreman board's wording
       var verbe = esc(l.verbe || TYPES[l.type] || l.type);
       // The number only when it is the target session's own (copie_numero, PM 2026-11-06): the foreman's means nothing there.
@@ -881,9 +955,16 @@ tr.retiree .titre { text-decoration:line-through }
       var faitSeul = !!(kr && etat.clore && /data-choix="ok"/.test(reponses));
       if (faitSeul) reponses = reponses.replace(/data-choix="ok"/g, 'data-choix="ok" data-retirer-apres="' + esc(kr) + '"');
       // Every line keeps a way into its session (PM, 2026-11-07): the answer buttons never take the place of « Ouvrir ».
-      if (reponses) agir = reponses + (sid ? '<button type="button" class="act k-task ouvrir sous" data-sid="' + esc(sid) + '"' + copie + ' title="Répondre dans la session' + A_SON_DEBUT + '">Ouvrir ↗</button>' : "");
+      // The answers sit under the question, in the wide column, side by side (PM, 2026-11-26: one button per line made
+      // every line six lines high); « Agir » keeps « Ouvrir ↗ » and the line's own gestures, on one line.
+      if (reponses) { quoi += reponses; agir = sid ? '<button type="button" class="act k-task ouvrir" data-sid="' + esc(sid) + '"' + copie + ' title="Répondre dans la session' + A_SON_DEBUT + '">Ouvrir ↗</button>' : ""; }
       // A gesture to do elsewhere: the link to where it is done, beside « C'est fait ».
       var geste = l.type === "clic" ? lienGeste(l) : "";
+      // The document to read (PM, Q1 du 2026-11-17): a review line carries its piece, so the PM reads it, then answers
+      // « C'est bon » or « Corrections » without opening the session. A link the question writes (« Pièce : … »), else
+      // the Studio file it cites, read in the page.
+      if (l.depli && l.depli.piece) agir += '<a class="act" href="' + esc(l.depli.piece) + '" target="_blank" rel="noopener noreferrer" title="Le document à relire">Ouvrir le document ↗</a>';
+      else if (l.type === "review" && l.depli && (l.depli.fichiers || []).length) agir += gesteFichier(l, l.dossier, l.depli.fichiers[0]);
       if (geste) agir += '<a class="act" href="' + esc(geste) + '" target="_blank" rel="noopener noreferrer" title="Là où le geste se fait">Y aller ↗</a>';
       // Ligne de chantier : la session qui en parle, seulement quand le verbe mène ailleurs (PM, 2026-11-06 : le verbe
       // mène désormais à la session qui a posé la question, jamais deux boutons vers la même session).
@@ -896,18 +977,19 @@ tr.retiree .titre { text-decoration:line-through }
       // « Plus tard » where « Pas encore » was (PM, 2026-11-17): hidden until tomorrow, nothing sent.
       var a = attenteDe(l);
       if (gere && !faitSeul && ((Array.isArray(l.choix) && l.choix.indexOf(PAS_ENCORE) >= 0) || (a && Array.isArray(a.choix) && a.choix.indexOf(PAS_ENCORE) >= 0)))
-        agir += '<button type="button" class="fait" data-plus-tard="' + esc(kr) + '" title="Masquer cette ligne jusqu\'à demain, sur le tableau seulement : rien n\'est envoyé à la session">Plus tard</button>';
+        agir += '<button type="button" class="fait" data-plus-tard="' + esc(kr) + '" title="Plus tard : masquer cette ligne jusqu\'à demain, sur le tableau seulement, rien n\'est envoyé à la session" aria-label="Plus tard">' + ICONE.plusTard + "</button>";
       // A session stopped for more than 48 h (PM, 2026-11-17): « Abandonner » takes the line off and proposes the session
       // for archiving (the « À ranger » block under the board, archived only on the PM's « Ranger »).
       if (gere && arretee(l) && age > 48 * 3600000)
-        agir += '<button type="button" class="fait" data-abandonner="' + esc(kr) + '" title="La ligne part et la session passe dans « Sessions finies à ranger », sous le tableau (10 secondes pour annuler)">Abandonner</button>';
-      else if (gere && !faitSeul) agir += '<button type="button" class="fait" data-retirer="' + esc(kr) + '" title="C\'est fait, ou plus d\'actualité : la ligne quitte le tableau (10 secondes pour annuler)">Fait / Retirer du tableau</button>';
+        agir += '<button type="button" class="fait" data-abandonner="' + esc(kr) + '" title="Abandonner : la ligne part et la session passe dans « Sessions finies à ranger », sous le tableau (10 secondes pour annuler)" aria-label="Abandonner">' + ICONE.abandonner + "</button>";
+      else if (gere && !faitSeul) agir += '<button type="button" class="fait" data-retirer="' + esc(kr) + '" title="Fait / Retirer du tableau : c\'est fait, ou plus d\'actualité, la ligne quitte le tableau (10 secondes pour annuler)" aria-label="Fait / Retirer du tableau">' + ICONE.fait + "</button>";
       // One button that says what it does: out of « D'abord », or into it; on a line he moved, it undoes his order.
       if (bande && kr && reclassementAllume() && etat.clore && etat.mcp) {
         var enHaut = bande === "dabord", vers = l.reclassee ? "annuler" : enHaut ? "ensuite" : "dabord";
-        agir += '<button type="button" class="reclasser" data-reclasser="' + vers + "|" + esc(kr) + '" title="' +
-          (vers === "annuler" ? "Annule ton classement : la ligne reprend sa place calculée" : enHaut ? "La ligne passe dans « Ensuite »" : "La ligne passe dans « D'abord »") + '">' +
-          (enHaut ? "Pas si urgent" : "À faire d'abord") + "</button>";
+        var nomReclasser = enHaut ? "Pas si urgent" : "À faire d'abord";
+        agir += '<button type="button" class="reclasser" data-reclasser="' + vers + "|" + esc(kr) + '" aria-label="' + nomReclasser + '" title="' + nomReclasser + " : " +
+          (vers === "annuler" ? "annule ton classement, la ligne reprend sa place calculée" : enHaut ? "la ligne passe dans « Ensuite »" : "la ligne passe dans « D'abord »") + '">' +
+          (enHaut ? ICONE.descendre : ICONE.monter) + "</button>";
       }
       var ecoulee = '<span class="elapsed' + (age > 48 * 3600000 ? " late" : "") + '" title="' + esc(dateCourte(l.depuis)) + '">' + ecoule(age) + "</span>";
       var quand = l.echeance
@@ -921,7 +1003,7 @@ tr.retiree .titre { text-decoration:line-through }
         '<td class="studio">' + (nouveauStudio ? esc(l.studio) : "") + "</td>" +
         '<td class="session">' + session + "</td>" +
         '<td class="action">' + quoi + "</td>" +
-        '<td class="type">' + agir + "</td>" +
+        '<td class="type"><div class="gestes">' + agir + "</div></td>" +
         '<td class="quand">' + quand + "</td></tr>" +
         (corps ? '<tr class="detail"' + (ouvert ? "" : " hidden") + '><td class="studio"></td><td class="session"></td><td class="deplie" colspan="3"><div class="corps">' + corps + "</div></td></tr>" : "");
     }
@@ -1002,8 +1084,12 @@ tr.retiree .titre { text-decoration:line-through }
     $("a-ranger").innerHTML = ar.length ? "<table><tbody>" + ar.map(function (x) {
       return '<tr><td class="session">' + bouton(x.id, x.titre || "Session sans titre", false, "Ouvrir la session") +
         (x.abandon ? ' <span class="muted">abandonnée</span>' : "") + "</td></tr>";
-    }).join("") + "</tbody></table>" + (etat.mcp && d.ranger_texte ? '<p><button type="button" class="act k-task" data-ranger="1" title="Copie la demande d\'archivage, à coller dans une nouvelle session (Cmd+N)">' +
-      (etat.rangerCopie ? "Copié : colle-le dans une nouvelle session (Cmd+N)" : "Ranger") + "</button></p>" : "") : "";
+    }).join("") + "</tbody></table>" + (d.ranger_texte ? "<p>" + (etat.mcp ? '<button type="button" class="act k-task" data-ranger="1" title="Copie la demande d\'archivage, à coller dans une nouvelle session (Cmd+N)">' +
+      (etat.rangerCopie ? "Copié : colle-le dans une nouvelle session (Cmd+N)" : "Ranger") + "</button> " : "") +
+      // The request itself, always visible and selectable (PM, 2026-11-20: nothing to copy in sight; the app's pane may
+      // refuse the clipboard, so the text is there to select and copy by hand).
+      '<span class="muted">La demande, à copier (Cmd+C) et coller dans une nouvelle session (Cmd+N) :</span></p>' +
+      '<textarea readonly class="demande-ranger" data-demande-archivage="1" rows="6" aria-label="Demande d\'archivage à copier">' + esc(d.ranger_texte) + "</textarea>" : "") : "";
     // Les sessions finies que le rangement a archivées aujourd'hui (hooks/rangement.py) : leur titre, pour les rouvrir.
     var rangees = d.rangees || [];
     $("bloc-rangees").hidden = !rangees.length;
@@ -1022,7 +1108,7 @@ tr.retiree .titre { text-decoration:line-through }
   }
 
   // « Mise en route » (PM, revue du 2026-11-15, Q4 et Q8) : ce que l'installation ne pose plus, en tête du tableau dès le
-  // premier jour, sans délai ni relance. Le point du matin d'abord (« Today » et la passe des conflits du lundi en
+  // premier jour, sans délai ni relance. Le point du matin d'abord (« Today » et la passe quotidienne des conflits en
   // dépendent), puis le premier relevé des conflits de chaque Studio jamais vérifié (lignes `verifier` de la liste par
   // projet), puis la connexion du Terminal. Une étape part quand le Mac la voit faite, ou sur « Pas pour moi » (« clore »).
   // Son bouton copie la commande à coller dans une nouvelle session : la page n'en ouvre pas ; un relevé ouvre sa session.
@@ -1102,6 +1188,9 @@ tr.retiree .titre { text-decoration:line-through }
       alerte("");
     } catch (err) {
       if (err && err.code === "cancelled") { alerte("Demande non copiée : refusé dans l'app."); return; }
+      // Not copied for sure: never say « Copié ». The text under the button is selectable.
+      alerte("Copie impossible depuis la page : sélectionne la demande sous le bouton, Cmd+C, puis colle-la dans une nouvelle session.");
+      return;
     }
     etat.rangerCopie = Date.now();
     rendre();
@@ -1146,17 +1235,35 @@ tr.retiree .titre { text-decoration:line-through }
     var questions = (v.questions || []).filter(pasRetiree);
     var bande = questions.filter(enBande);
     var bandes = bandesDuTableau(dem.fraiches.filter(duProjet), questions.filter(function (l) { return !enBande(l); }).map(horsBande));
-    var q = bandes.dabord.concat(bandes.ensuite, bandes.attendre);
-    var remontees = remonterAnciennes(bande.length + q.length, dem.anciennes.filter(duProjet).concat((v.anciennes || []).filter(pasRetiree)));
+    var remontees = remonterAnciennes(bande.length + bandes.dabord.length + bandes.ensuite.length + bandes.attendre.length, dem.anciennes.filter(duProjet).concat((v.anciennes || []).filter(pasRetiree)));
     var vieilles = remontees.reste;
-    q = q.concat(remontees.haut);
+    // The same bands as Mon Studio (PM, Q7, 2026-11-25), the same titles, « Peut attendre » folded; a band with no line has
+    // no title, and « Ensuite » has one only under a « D'abord » (as on the board): no title added for nothing.
+    var ensuite = bandes.ensuite.concat(remontees.haut), attendre = bandes.attendre;
+    var q = bandes.dabord.concat(ensuite, attendre);
     // The dot on « Projet »: the lines of this view that appeared since the last opening (none the first time).
     var nouvelles = etat.vuAvant ? bande.concat(q).filter(function (l) { return l.depuis > etat.vuAvant; }).length : 0;
     $("projet-onglet-projet").innerHTML = "Projet" + (nouvelles ? ' <span class="pastille">' + nouvelles + "</span>" : "");
     $("projet-onglet-projet").setAttribute("aria-label", nouvelles ? "Projet · " + nouvelles + (nouvelles > 1 ? " nouvelles lignes" : " nouvelle ligne") + " depuis ta dernière visite" : "Projet");
     var table = function (ls) { return entete + ls.map(function (l, i) { return rang(l, i === 0, false); }).join("") + "</tbody></table>"; };
+    var titreBande = function (nom, n) { return '<tr class="bande-titre"><td colspan="5">' + nom + ' <span class="n">· ' + n + "</span></td></tr>"; };
+    var tableDesBandes = function () {
+      var html = entete, premier = true, ligne = function (l) { html += rang(l, premier, false); premier = false; };
+      if (bandes.dabord.length) html += titreBande("D'abord", bandes.dabord.length);
+      bandes.dabord.forEach(ligne);
+      if (bandes.dabord.length && ensuite.length) html += titreBande("Ensuite", ensuite.length);
+      ensuite.forEach(ligne);
+      return html + "</tbody></table>";
+    };
+    var blocAttendre = function () {
+      return '<h2><button type="button" class="replier" id="projet-attendre-bascule" aria-expanded="' + !!etat.projetAttendreOuvert +
+        '"><span class="fleche">▸</span>Peut attendre <span class="muted">· ' + attendre.length + "</span></button></h2>" +
+        (etat.projetAttendreOuvert ? table(attendre) : "");
+    };
     $("projet-questions").innerHTML = (bande.length ? '<div class="bande"><h3>En un clic (' + bande.length + ")</h3>" + table(bande) + "</div>" : "") +
-      (q.length ? table(q) : bande.length ? "" : '<p class="empty">Rien ne t\'attend sur ce projet.</p>') +
+      (bandes.dabord.length + ensuite.length ? tableDesBandes() : "") +
+      (attendre.length ? blocAttendre() : "") +
+      (q.length ? "" : bande.length ? "" : '<p class="empty">Rien ne t\'attend sur ce projet.</p>') +
       (vieilles.length ? '<h3><button type="button" class="replier" id="projet-anciennes-bascule" aria-expanded="' + etat.anciennesOuvertes + '"><span class="fleche">▸</span>Anciennes · ' + vieilles.length + "</button></h3>" +
         (etat.anciennesOuvertes ? table(vieilles) : "") : "");
     // The project's « Fils rouges » (PM, 2026-11-17): off the main board, here only, unfolded under the questions; one
@@ -1196,7 +1303,10 @@ tr.retiree .titre { text-decoration:line-through }
   function ouvrirConflits(c) { return c && Array.isArray(c.ouverts) ? c.ouverts : []; }
   // What a session is settling now (2026-11-19) : the questions it asks on the board (c.en_cours) and the sessions that
   // settle conflicts of this Studio (the register's session, /backlog:nettoyer…) active within a day (c.sessions_actives).
-  function enCoursConflits(c) { return c && Array.isArray(c.en_cours) ? c.en_cours : []; }
+  // One list « À trancher » (PM, Q21, 2026-11-24): a question about a register case is marked on that case (`posee`); the
+  // others stay apart (c.questions_session, else c.en_cours). A numbered steering question (« Q29 · … », compte false) is shown, not counted.
+  function enCoursConflits(c) { return c && Array.isArray(c.questions_session) ? c.questions_session : c && Array.isArray(c.en_cours) ? c.en_cours : []; }
+  function compteesConflits(c) { return enCoursConflits(c).filter(function (x) { return x.compte !== false; }); }
   function activesConflits(c) { return c && Array.isArray(c.sessions_actives) ? c.sessions_actives : []; }
   function boutonRepondre(sid, titre, verbe) {
     return etat.mcp ? '<button type="button" class="aller" data-sid="' + esc(sid) + '" title="Ouvrir cette session">' + verbe + " « " + esc(titre) + " » ↗</button>"
@@ -1223,6 +1333,12 @@ tr.retiree .titre { text-decoration:line-through }
     }
     return "Pas encore de session « " + esc(c.titre_session) + " ». Pour la créer : ouvre une session dans le dossier du Studio et lance <code>" + esc(c.commande || "/cockpit:conflits") + "</code>.";
   }
+  // The full pass suggested after the period: the conflicts session, else the Studio's most recent session, the command copied.
+  function boutonRepasseConflits(c) {
+    var sid = c.session && c.session.sessionId ? c.session.sessionId : c.session_studio;
+    if (!sid || !etat.mcp) return "";
+    return '<button type="button" class="aller" data-sid="' + esc(sid) + '" data-copier="/cockpit:conflits rattrapage" title="Ouvre la session, texte copié : colle-le, la passe complète rattrape ce que l\'ingestion n\'a pas vu">Refaire une passe complète ↗</button>';
+  }
   function valeurConflit(nom, x) {
     return '<div class="valeur">' + nom + " : <strong>" + esc(x.texte) + "</strong> (" + esc(x.source) + ", " + esc(x.date) + ")</div>";
   }
@@ -1243,10 +1359,13 @@ tr.retiree .titre { text-decoration:line-through }
     if (actives.length) parts.push("Tri en cours dans « " + esc(actives[0].titre) + " »" + (actives.length > 1 ? " (+" + (actives.length - 1) + ")" : ""));
     var nCas = ouvrirConflits(c).length;
     if (nCas) parts.push(nCas + (nCas > 1 ? " conflits à trancher" : " conflit à trancher"));
-    if (enCours.length) parts.push(enCours.length + (enCours.length > 1 ? " questions ouvertes" : " question ouverte"));
+    if (enCours.length) parts.push(enCours.length + (enCours.length > 1 ? " questions de la session" : " question de la session"));
     if (!n && !actives.length && r && r.a_jour && c.dernier_passage) parts[0] = "Studio à jour";
+    // Ingestion reports conflicts as it finds them, not all of them: after the period (30 days, settable), a full pass.
+    var rp = c.repasse && c.repasse.due ? c.repasse : null;
+    if (rp) parts.push("Dernier passage complet il y a " + rp.jours + " jours : une nouvelle passe rattrape ce que l'ingestion n'a pas vu");
     if (!parts.length) return "";
-    return '<p class="pour-info"><strong>' + parts[0] + "</strong>" + parts.slice(1).map(function (x) { return " · " + x; }).join("") + "</p>";
+    return '<p class="pour-info"><strong>' + parts[0] + "</strong>" + parts.slice(1).map(function (x) { return " · " + x; }).join("") + "</p>" + (rp ? "<p>" + boutonRepasseConflits(c) + "</p>" : "");
   }
   // The journal of the register: what was settled, when, by whom (the PM's own words when kept). No code.
   var CHOIX_LISIBLE = { "remplacer": "remplacé", "à confirmer avec le client": "à confirmer avec le client", "simple discussion": "gardé tel quel" };
@@ -1258,8 +1377,16 @@ tr.retiree .titre { text-decoration:line-through }
         (x.origine === "backlog" ? " (backlog)" : "") + (x.reprise ? " (tranché à la main, repris)" : "") + "</div>" + (x.reponse ? '<div class="valeur">' + esc(x.reponse) + "</div>" : "") + "</li>";
     }).join("") + "</ul>" + (c.tranches > j.length ? '<p class="pour-info">Et ' + (c.tranches - j.length) + " plus anciens, dans le registre des conflits du Studio.</p>" : "");
   }
+  // What the PM's decisions file marks « pas tranchée » is open, not settled (PM, 2026-11-20): its own list, above the journal.
+  function enAttenteConflits(c) {
+    var a = (c && c.en_attente) || [];
+    if (!a.length) return "";
+    return "<h3>Pas encore tranché</h3>" + '<ul class="conflits">' + a.map(function (x) {
+      return "<li><strong>" + esc(x.sujet) + "</strong>" + '<div class="valeur">Noté le ' + esc(jjmm(x.date)) + " dans les décisions du backlog : " + esc(x.note || "pas tranchée") + "</div></li>";
+    }).join("") + "</ul>";
+  }
   function rendreConflits(c) {
-    var cas = ouvrirConflits(c), enCours = enCoursConflits(c), actives = activesConflits(c), nCas = cas.length, n = nCas + enCours.length, conflits = etat.ongletProjet === "conflits";
+    var cas = ouvrirConflits(c), enCours = enCoursConflits(c), actives = activesConflits(c), nCas = cas.length, n = nCas + compteesConflits(c).length, conflits = etat.ongletProjet === "conflits";
     // The dot counts the new cases, not shown to the PM yet in the conflicts session (PM, 2026-11-10).
     var nv = c && c.nouveaux ? c.nouveaux : 0;
     $("projet-onglet-conflits").innerHTML = "Conflits" + (nv ? ' <span class="pastille">' + nv + "</span>" : "");
@@ -1273,9 +1400,9 @@ tr.retiree .titre { text-decoration:line-through }
     $("projet-ligne-conflits").hidden = !n;
     $("projet-ligne-conflits").innerHTML = n ? "<strong>" + n + (n > 1 ? " conflits ouverts" : " conflit ouvert") + "</strong>" +
       (nv ? " dont " + nv + (nv > 1 ? " nouveaux" : " nouveau") : "") + (nCas ? " · " + nCas + " dans le registre du Studio" : "") +
-      (enCours.length ? " · " + enCours.length + (enCours.length > 1 ? " questions posées" : " question posée") + " en ce moment" : "") +
+      (compteesConflits(c).length ? " · dont " + compteesConflits(c).length + (compteesConflits(c).length > 1 ? " questions de la session" : " question de la session") : "") +
       (c.relance ? " · à relancer : " + esc(c.raison) : "") + " · " +
-      (nCas ? boutonSessionConflits(c) : boutonRepondre(enCours[0].session, enCours[0].session_titre, "Répondre dans")) : "";
+      (nCas ? boutonSessionConflits(c) : boutonRepondre(compteesConflits(c)[0].session, compteesConflits(c)[0].session_titre, "Répondre dans")) : "";
     if (!c) { $("projet-conflits").innerHTML = '<p class="empty">Registre des conflits pas encore lu.</p>'; return; }
     // The register's session button, unless another session is the one settling (no « pas encore de session » then).
     var h = enteteConflits(c, n) + (c.session || !(enCours.length || actives.length) ? "<p>" + boutonSessionConflits(c) + "</p>" : "");
@@ -1285,40 +1412,59 @@ tr.retiree .titre { text-decoration:line-through }
       " : ce qu'elle vient d'inscrire apparaît ici d'ici quelques minutes.</p>";
     if (c.lu === false) h += '<p class="empty">Le registre des conflits n\'a pas pu être lu : il s\'affiche après le prochain calcul de Mon Studio hors de l\'app.</p>';
     else if (!n && c.en_retard) h += "";
-    else if (!n && c.verification === "jamais") h += '<p class="empty">' + esc(c.texte_premiere || "Le premier relevé des conflits n'est pas encore fait.") + "</p>";
-    else if (!n && !actives.length && c.dernier_passage && !(c.journal || []).length) h += '<p class="empty">Passage complet du ' + esc(jjmm(c.dernier_passage)) + " : aucun conflit.</p>";
-    else if (!n && !actives.length && !(c.journal || []).length) h += '<p class="empty">Aucun conflit ouvert dans ce Studio.</p>';
+    else if (!n && !enCours.length && c.verification === "jamais") h += '<p class="empty">' + esc(c.texte_premiere || "Le premier relevé des conflits n'est pas encore fait.") + "</p>";
+    else if (!n && !enCours.length && !actives.length && c.dernier_passage && !(c.journal || []).length && !(c.en_attente || []).length) h += '<p class="empty">Passage complet du ' + esc(jjmm(c.dernier_passage)) + " : aucun conflit.</p>";
+    else if (!n && !enCours.length && !actives.length && !(c.journal || []).length && !(c.en_attente || []).length) h += '<p class="empty">Aucun conflit ouvert dans ce Studio.</p>';
     else {
       if (n) h += '<p class="pour-info">Lecture seule : tu réponds dans la session indiquée, une décision à la fois.</p>';
       var sessionsAvecQuestion = {};
-      if (enCours.length || actives.length) {
-        h += "<h3>En cours</h3>" + '<ul class="conflits">' + enCours.map(function (x) {
-          sessionsAvecQuestion[x.session] = true;
-          return "<li><strong>" + esc(x.question) + "</strong>" + (x.options ? '<div class="valeur"><small>' + esc(x.options) + "</small></div>" : "") +
-            "<div>" + boutonRepondre(x.session, x.session_titre, "Répondre dans") + "</div></li>";
-        }).join("") + actives.filter(function (x) { return !sessionsAvecQuestion[x.sessionId]; }).map(function (x) {
-          return "<li>Tri en cours dans « " + esc(x.titre) + " » " + (etat.mcp ? '<button type="button" class="aller" data-sid="' + esc(x.sessionId) + '" title="Ouvrir cette session">Ouvrir ↗</button>' : "") + "</li>";
-        }).join("") + "</ul>";
-      }
-      if (nCas) h += (enCours.length || actives.length ? "<h3>Dans le registre du Studio</h3>" : "") + '<ul class="conflits">' + cas.map(function (x) {
-        return "<li><strong>" + esc(x.sujet) + "</strong>" + (x.nouveau ? ' <span class="pastille">nouveau</span>' : "") + valeurConflit("Ancienne valeur", x.ancienne) + valeurConflit("Nouvelle valeur", x.nouvelle) +
-          '<div class="valeur">Déjà communiqué au client : <strong>' + (x.communique ? "oui" : "non") + "</strong></div></li>";
+      // One list: the register's open cases; the one a session asks now says « posé maintenant » and answers there.
+      if (nCas) h += "<h3>À trancher</h3>" + '<ul class="conflits">' + cas.map(function (x) {
+        if (x.posee) sessionsAvecQuestion[x.posee.session] = true;
+        return "<li><strong>" + esc(x.sujet) + "</strong>" + (x.nouveau ? ' <span class="pastille">nouveau</span>' : "") + (x.posee ? ' <span class="pastille">posé maintenant</span>' : "") +
+          valeurConflit("Ancienne valeur", x.ancienne) + valeurConflit("Nouvelle valeur", x.nouvelle) +
+          '<div class="valeur">Déjà communiqué au client : <strong>' + (x.communique ? "oui" : "non") + "</strong></div>" +
+          (x.posee ? "<div>" + boutonRepondre(x.posee.session, x.posee.session_titre, "Répondre dans") + "</div>" : "") + "</li>";
+      }).join("") + "</ul>";
+      enCours.forEach(function (x) { sessionsAvecQuestion[x.session] = true; });
+      var ouvertes = actives.filter(function (x) { return !sessionsAvecQuestion[x.sessionId]; });
+      if (enCours.length) h += "<h3>Questions de la session</h3>" + '<ul class="conflits">' + enCours.map(function (x) {
+        return "<li><strong>" + esc(x.question) + "</strong>" + (x.options ? '<div class="valeur"><small>' + esc(x.options) + "</small></div>" : "") +
+          "<div>" + boutonRepondre(x.session, x.session_titre, "Répondre dans") + "</div></li>";
+      }).join("") + "</ul>";
+      if (ouvertes.length) h += '<ul class="conflits">' + ouvertes.map(function (x) {
+        return "<li>Tri en cours dans « " + esc(x.titre) + " » " + (etat.mcp ? '<button type="button" class="aller" data-sid="' + esc(x.sessionId) + '" title="Ouvrir cette session">Ouvrir ↗</button>' : "") + "</li>";
       }).join("") + "</ul>";
     }
     if (c.illisibles) h += '<p class="pour-info">' + c.illisibles + (c.illisibles > 1 ? " cas illisibles" : " cas illisible") + " dans le registre des conflits du Studio : la session des conflits les montre.</p>";
-    h += journalConflits(c);
+    h += enAttenteConflits(c) + journalConflits(c);
     $("projet-conflits").innerHTML = h;
   }
-  async function lireProjet() {
+  // Like « lignes » (2026-11-24): the connector answers « projet » at once with the last view of that folder
+  // (`frais: false`) and computes it again; the page reads it again every 1.5 s, 20 times at most, until it is fresh.
+  // A re-read that brings the same view draws nothing. No `frais` (an older connector): fresh.
+  etat.projetPerime = { minuteur: 0, essais: 0, dossier: "" };
+  async function lireProjet(relecture) {
     var dossier = etat.projet;
     if (!etat.mcp || !dossier) return;
+    var pp = etat.projetPerime, pareil = false;
+    clearTimeout(pp.minuteur);
+    if (!relecture || pp.dossier !== dossier) { pp.essais = 0; pp.dossier = dossier; }
     try {
       var r = await etat.mcp.callTool(SERVEUR, "projet", { dossier: dossier }, { cache: false });
-      if (etat.projet === dossier) { etat.vue = r && r.payload; alerte(""); }
+      if (etat.projet === dossier) {
+        var v = r && r.payload, emp = JSON.stringify(Object.assign({}, v, { frais: null }));
+        pareil = relecture && emp === pp.empreinte;
+        etat.vue = v; pp.empreinte = emp; alerte("");
+        if (v && v.frais === false && pp.essais < FRAIS_ESSAIS) {
+          pp.essais++;
+          pp.minuteur = setTimeout(function () { if (etat.projet === dossier && document.visibilityState === "visible") lireProjet(true); }, FRAIS_MS);
+        }
+      }
     } catch (err) {
       if (etat.projet === dossier) alerte("Vue projet indisponible (" + ((err && err.code) || "erreur") + ") : republie la page avec l'outil « projet ».");
     }
-    rendre();
+    if (!pareil) rendre();
   }
   function nommerPage(nom) {
     document.title = nom;
@@ -1345,7 +1491,7 @@ tr.retiree .titre { text-decoration:line-through }
   // La liste par projet (projets.py) : un bloc par Studio qui a quelque chose, ses lignes, le bouton qui ouvre sa
   // session et, si la page a l'outil « clore », « Fait / plus d'actu » qui ferme une ligne qu'aucune source ne voit.
   // Une question se ferme d'elle-même quand elle a sa réponse : pas de bouton.
-  var GENRES = { a_toi: "à toi de jouer", entree: "entré au Studio", question: "question", reunion: "réunion sans compte rendu", conflits: "conflits à trancher" };
+  var GENRES = { a_toi: "à toi de jouer", entree: "entré au Studio", question: "question", reunion: "réunion sans compte rendu", conflits: "conflits à trancher", repasse: "passe complète des conflits" };
   function jours(t) {
     var a = new Date(t), b = new Date(); a.setHours(0, 0, 0, 0); b.setHours(0, 0, 0, 0);
     var n = Math.round((b - a) / 86400000);
@@ -1356,7 +1502,7 @@ tr.retiree .titre { text-decoration:line-through }
   // réunions sans compte rendu et la relance des conflits.
   // The meetings without minutes moved to Today (PM, 2026-11-17, the morning stand-up), and « Fermé depuis hier » left:
   // nothing to do with that figure. Only the reminder of the conflicts stays here.
-  function lignesDuBloc(p) { return (p.lignes || []).filter(function (l) { return l.type === "conflits" && !etat.closes[l.cle]; }); }
+  function lignesDuBloc(p) { return (p.lignes || []).filter(function (l) { return (l.type === "conflits" || l.type === "repasse") && !etat.closes[l.cle]; }); }
   function rendreProjets(pj) {
     var liste = (pj && Array.isArray(pj.projets) ? pj.projets : []).filter(function (p) { return lignesDuBloc(p).length; });
     $("bloc-projets").hidden = !liste.length;
@@ -1366,7 +1512,7 @@ tr.retiree .titre { text-decoration:line-through }
         (lignes.length ? "<ul>" + lignes.map(function (l) {
           var sid = etat.mcp ? l.session : "";
           var aide = l.repli ? "Pas de session 📬 : ouvre la plus récente du Studio" : "Ouvrir la session";
-          var gestes = sid ? '<button type="button" class="act k-task" data-sid="' + esc(sid) + '" title="' + esc(aide) + '">Ouvrir ↗</button>' : "";
+          var gestes = sid ? '<button type="button" class="act k-task" data-sid="' + esc(sid) + '"' + (l.copier ? ' data-copier="' + esc(l.copier) + '"' : "") + ' title="' + esc(aide) + '">Ouvrir ↗</button>' : "";
           if (etat.retraits[l.cle]) gestes = '<button type="button" class="aller" data-annuler="' + esc(l.cle) + '" title="10 secondes pour annuler">Annuler</button>';
           else if (etat.clore && etat.mcp && l.type !== "question" && l.type !== "conflits")
             gestes += '<button type="button" class="fait" data-retirer="' + esc(l.cle) + '" title="C\'est fait, ou plus d\'actualité : la ligne part (10 secondes pour annuler)">Fait / Retirer du tableau</button>';
@@ -1391,8 +1537,15 @@ tr.retiree .titre { text-decoration:line-through }
     if (/^https:\/\/(drive|docs)\.google\.com\//i.test(u)) return "Drive";
     return SOURCE_MATIN[source] && source !== "studio" ? SOURCE_MATIN[source] : "Source";
   }
+  // A Slack message opens in the desktop app (PM, Q14, 2026-11-17): the connector's « ouvrir » turns the web address
+  // into a slack:// link and hands it to macOS, the page never navigates. Without the connector, the web address.
+  function lienSlack(u, texte, classe) {
+    if (etat.mcp) return '<button type="button" class="' + (classe || "voir") + '" data-slack="' + esc(u) + '" title="Ouvre le message dans l\'app Slack">' + esc(texte) + "</button>";
+    return '<a' + (classe ? ' class="' + classe + '"' : "") + ' href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + esc(texte) + "</a>";
+  }
   function boutonSource(x) {
     var u = (x && x.lien) || "";
+    if (/^https:\/\/([a-z0-9-]+\.)*slack\.com\/archives\//i.test(u)) return lienSlack(u, "Slack ↗", "act k-task");
     if (/^https:\/\//.test(u)) {
       return '<a class="act" href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + esc(libelleLien(u, x.source)) + " ↗</a>";
     }
@@ -1488,7 +1641,9 @@ tr.retiree .titre { text-decoration:line-through }
   }
   function attenteReunion(a) {
     var n = ouvertesDuProjet(a.projet);
-    return n ? ' <span class="pour-reunion">' + n + (n > 1 ? " questions ouvertes" : " question ouverte") + "</span>" : "";
+    // A button (PM, 2026-11-20: « 26 questions ouvertes » was not clickable): it opens the board filtered on that project,
+    // the very lines counted here, with the filter the project buttons use (nothing is asked of the connector).
+    return n ? ' <button type="button" class="pour-reunion" data-voir-questions="' + esc(a.projet) + '" title="Voir ces questions au tableau">' + n + (n > 1 ? " questions ouvertes" : " question ouverte") + "</button>" : "";
   }
   function rendreSansReponse(m) {
     var liste = ((m && m.sans_reponse) || []).filter(function (x) { return !x.cle || (!etat.closes[x.cle] && !etat.matinFaits[x.cle]); });
@@ -1669,7 +1824,7 @@ tr.retiree .titre { text-decoration:line-through }
       $("matin").innerHTML = vide + rendreSansReponse(m) + rendreSansCompteRendu() + rendreEntrees(m); return;
     }
     var aTraiter = aTraiterOuverts(m), nTotal = aTraiter.length;
-    var phrase = (JOUR[m.jour] || JOUR.normale) + " · " + (nTotal ? nTotal + " à traiter" : "rien à traiter");
+    var phrase = (JOUR[m.jour] || JOUR.normale) + " · " + (nTotal ? nTotal + " à traiter aujourd'hui" : "rien à traiter");
     var agenda = m.agenda || [], regle = m.regle || [], demain = (m.preparer_demain || []).filter(function (x) { return !x.cle || !etat.matinFaits[x.cle]; });
     var h = '<p class="phrase j-' + esc(JOUR[m.jour] ? m.jour : "normale") + '">' + esc(phrase) + "</p>" +
       (agenda.length ? '<ol class="frise" aria-label="Agenda du jour">' + agenda.map(function (a) {
@@ -1719,6 +1874,16 @@ tr.retiree .titre { text-decoration:line-through }
       return '<li><span class="quoi">' + esc(quoi) + '</span><span class="gestes">' + gestes + "</span>" +
         (plus ? '<span class="plus">' + esc(plus) + "</span>" : "") + "</li>";
     }).join("") + "</ul>";
+  }
+  async function ouvrirSlack(bouton) {
+    var u = bouton.getAttribute("data-slack");
+    if (!u) return;
+    try {
+      await etat.mcp.callTool(SERVEUR, "ouvrir", { slack: u }, { cache: false });
+      alerte("");
+    } catch (err) {
+      window.open(u, "_blank", "noopener");
+    }
   }
   async function ouvrirFichier(bouton) {
     var fichier = bouton.getAttribute("data-fichier"), dossier = bouton.getAttribute("data-dossier");
@@ -1942,6 +2107,15 @@ tr.retiree .titre { text-decoration:line-through }
   function sessionDeLaReponse(l) {
     return /^local_/.test(l.source || "") ? l.source : sessionAOuvrir(l);
   }
+  // The board's own gestures as small icons (PM, 2026-11-26), their full name on hover and for screen readers.
+  var SVG = '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+  var ICONE = {
+    plusTard: SVG + '<circle cx="8" cy="8" r="6"/><path d="M8 4.8V8l2.2 1.6"/></svg>',
+    fait: SVG + '<path d="M3.2 8.4l3 3 6.6-6.8"/></svg>',
+    abandonner: SVG + '<path d="M4 4l8 8M12 4l-8 8"/></svg>',
+    monter: SVG + '<path d="M8 13V3.5M4 7.2L8 3.2l4 4"/></svg>',
+    descendre: SVG + '<path d="M8 3v9.5M4 8.8l4 4 4-4"/></svg>'
+  };
   function boutonsReponse(l) {
     var recent = null;
     sessionsDe(l).forEach(function (s) {
@@ -2208,6 +2382,8 @@ tr.retiree .titre { text-decoration:line-through }
       if (etat.donnees) rendreMatin(etat.donnees.matin);
       return;
     }
+    var rt = ev.target.closest && ev.target.closest("[data-demande-archivage]");
+    if (rt) { if (rt.select) rt.select(); return; }   // one click selects the whole request, ready for Cmd+C
     var rg = ev.target.closest && ev.target.closest("[data-ranger]");
     if (rg) {
       ev.preventDefault(); ev.stopPropagation();
@@ -2266,6 +2442,12 @@ tr.retiree .titre { text-decoration:line-through }
       if (!cl.disabled) clore(cl);
       return;
     }
+    var sl = ev.target.closest && ev.target.closest("[data-slack]");
+    if (sl) {
+      ev.preventDefault(); ev.stopPropagation();
+      ouvrirSlack(sl);
+      return;
+    }
     var fi = ev.target.closest && ev.target.closest("[data-fichier]");
     if (fi) {
       ev.preventDefault(); ev.stopPropagation();
@@ -2297,6 +2479,13 @@ tr.retiree .titre { text-decoration:line-through }
     if (sb) {
       ev.preventDefault(); ev.stopPropagation();
       etat.sansOuvert = !etat.sansOuvert;
+      if (etat.donnees) rendre();
+      return;
+    }
+    var rpa = ev.target.closest && ev.target.closest("#projet-attendre-bascule");
+    if (rpa) {
+      ev.preventDefault(); ev.stopPropagation();
+      etat.projetAttendreOuvert = !etat.projetAttendreOuvert;
       if (etat.donnees) rendre();
       return;
     }
@@ -2338,6 +2527,17 @@ tr.retiree .titre { text-decoration:line-through }
     decider(b);
   });
   document.addEventListener("click", function (ev) {
+    var q = ev.target.closest && ev.target.closest("[data-voir-questions]");
+    if (!q) return;
+    ev.preventDefault(); ev.stopPropagation();
+    var base = function (x) { return String(x || "").replace(/\/+$/, "").split("/").pop(); };
+    var v = q.getAttribute("data-voir-questions") || "", ligne = ((etat.donnees && etat.donnees.lignes) || []).filter(pasRetiree)
+      .filter(function (l) { return nomStudio(l.studio) === nomStudio(v) || nomStudio(base(l.projet)) === nomStudio(v); })[0];
+    etat.filtre = (ligne && ligne.studio) || v;   // the board's filter matches the name of the Studio of a line
+    choisirOnglet("tableau");
+    if (etat.donnees) rendre();
+  });
+  document.addEventListener("click", function (ev) {
     var b = ev.target.closest && ev.target.closest("[data-filtre]");
     if (!b) return;
     var v = b.getAttribute("data-filtre") || "";
@@ -2369,9 +2569,11 @@ tr.retiree .titre { text-decoration:line-through }
     if (ev.type === "data") {
       var p = ev.result && ev.result.payload;
       if (p && Array.isArray(p.lignes)) {
+        relireSiPerime(p);
         if (Object.keys(etat.retraits).length) { etat.lectureRetenue = ev; return; }   // shown once the 10 s are over
-        // Relu toutes les 15 s : le tableau n'est refait que s'il a changé, la sélection et le focus restent.
-        var empreinte = JSON.stringify(Object.assign({}, p, { genere: 0, liste_projets: p.liste_projets ? Object.assign({}, p.liste_projets, { genere: 0 }) : null })), pareil = empreinte === etat.empreinte;
+        // Relu toutes les 15 s : le tableau n'est refait que s'il a changé, la sélection et le focus restent. « frais »
+        // dit seulement si le connecteur recalcule encore : il ne refait pas le tableau.
+        var empreinte = JSON.stringify(Object.assign({}, p, { genere: 0, frais: null, liste_projets: p.liste_projets ? Object.assign({}, p.liste_projets, { genere: 0 }) : null })), pareil = empreinte === etat.empreinte;
         etat.donnees = p; etat.empreinte = empreinte;
         // A reading computed after a reclassement was kept carries it: the page's own copy is no longer needed.
         Object.keys(etat.reclasses).forEach(function (k) { var x = etat.reclasses[k]; if (x.fait && p.genere > x.fait) delete etat.reclasses[k]; });
@@ -2413,6 +2615,26 @@ tr.retiree .titre { text-decoration:line-through }
   // la page relance elle-même la lecture surveillée (invalidate). Rien ne part tant que la page est cachée (onglet ou
   // app en arrière-plan, ou cadre non affiché : la relecture attend une image, requestAnimationFrame) ; elle part à son retour.
   var RELIRE_MS = 15000;
+  // Le connecteur rend aussitôt le dernier tableau qu'il a calculé (`frais: false`) et le recalcule en fond (2026-11-23 :
+  // 4 à 8 s de calcul, rien à l'écran pendant ce temps). La page le relit alors toutes les 1,5 s jusqu'au tableau frais,
+  // 20 fois au plus ; la relecture des 15 s reprend ensuite comme avant.
+  var FRAIS_MS = 1500, FRAIS_ESSAIS = 20;
+  etat.perime = { minuteur: 0, essais: 0 };
+  function relireSiPerime(p) {
+    clearTimeout(etat.perime.minuteur);
+    if (p.frais !== false) { etat.perime.essais = 0; return; }
+    if (etat.perime.essais >= FRAIS_ESSAIS) return;
+    etat.perime.essais++;
+    etat.perime.minuteur = setTimeout(relireLignes, FRAIS_MS);
+  }
+  async function relireLignes() {
+    if (!etat.mcp || document.visibilityState !== "visible") return;  // relire() reprend à visibilitychange
+    try { await etat.mcp.invalidate(SERVEUR, "lignes"); }
+    catch (x) {  // runtime sans invalidate : une lecture fraîche, remise à la page
+      try { recevoir({ type: "data", result: await etat.mcp.callTool(SERVEUR, "lignes", null, { cache: { refresh: true } }) }); }
+      catch (err) { recevoir({ type: "error", error: err }); }
+    }
+  }
   function planifier() {
     clearTimeout(etat.minuteur); cancelAnimationFrame(etat.image);
     etat.minuteur = setTimeout(function () { etat.image = requestAnimationFrame(relire); }, RELIRE_MS);
@@ -2423,11 +2645,7 @@ tr.retiree .titre { text-decoration:line-through }
     try { await etat.mcp.invalidate(SERVEUR, "autorisations"); } catch (x) {}
     try { await etat.mcp.invalidate(SERVEUR, "attentes"); } catch (x) {}
     if (etat.projet) lireProjet();
-    try { await etat.mcp.invalidate(SERVEUR, "lignes"); }
-    catch (x) {  // runtime sans invalidate : une lecture fraîche, remise à la page
-      try { recevoir({ type: "data", result: await etat.mcp.callTool(SERVEUR, "lignes", null, { cache: { refresh: true } }) }); }
-      catch (err) { recevoir({ type: "error", error: err }); }
-    }
+    await relireLignes();
   }
   document.addEventListener("visibilitychange", function () {
     if (etat.mcp && document.visibilityState === "visible" && Date.now() - etat.relu > 2000) relire();

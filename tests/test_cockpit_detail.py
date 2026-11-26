@@ -63,7 +63,7 @@ class ForThePage(unittest.TestCase):
     def test_cut_title_without_detail_unfolds_whole(self):
         long = 'Q8 · ' + 'mot ' * 80
         l, = self.lines([{'type': 'decision', 'titre': long, 'ou': 'Kit A', 'depuis': '2026-10-14T08:00:00+02:00'}])
-        self.assertTrue(l['affiche_suite'].endswith('…'))
+        self.assertNotIn('…', l['affiche_suite'])   # cut on a word, never an ellipsis (PM, 2026-11-19)
         self.assertEqual(l['detail'], long.strip())
 
     def test_line_outside_a_chantier_unfolds_its_full_text(self):

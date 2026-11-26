@@ -31,7 +31,8 @@ from test_cockpit_nothing_forgotten import card, final, pm  # noqa: E402
 NOW = time.time()
 EXAMPLE = ROOT / 'skills' / 'mon-studio' / 'assets' / 'marqueurs-exemple.md'
 
-# name: (with the PM's marks, natural style, a line expected)
+# name: (with the PM's marks, natural style or None, a line expected). Gestures (checkboxes, a block to paste, an
+# imperative) are no longer guessed: only a question, a go or a decision asked makes a line in the natural style.
 CASES = {
     'decision': ("Le plan est prêt.\n\n## À trancher\n\n**Q1 · Format du CR** : court ou long ? Je recommande court.",
                  "Le plan est prêt. Tu préfères un CR court ou long ? Je recommande court.", True),
@@ -40,16 +41,11 @@ CASES = {
     'options': ("## À trancher\n\n**Q3 · Hébergement** : où héberger ?\n- A) chez le client\n- B) chez nous",
                 "Deux options pour l'hébergement :\n\n- A) chez le client\n- B) chez nous\n\nLaquelle tu choisis ?",
                 True),
-    'checkboxes': ("## À trancher\n\n**Q4 · Recette** : coche ce qui est validé.\n\n- [ ] Écran 1\n- [ ] Écran 2",
-                   "Pour la recette, coche ce qui est validé :\n\n- [ ] Écran 1\n- [ ] Écran 2", True),
-    'block': ("## À trancher\n\n**Q5 · Test** : colle ce prompt dans une nouvelle session :\n\n```\nfais le test\n```",
-              "Pour le tester, colle ce prompt dans une nouvelle session :\n\n```\nfais le test\n```", True),
     'your_call': ("## À trancher\n\n**Q6 · Arbitrage** : à toi de trancher entre les deux devis.",
                   "À toi de trancher entre les deux devis.", True),
     'want': ("## À trancher\n\n**Q7 · Relance** : veux-tu que je relance le client ?",
              "Veux-tu que je relance le client ?", True),
-    'nothing': ("Le fichier est rangé.\n\nRien à faire de ton côté.",
-                "Le fichier est rangé. Rien n'est attendu de toi.", False),
+    'nothing': ("Le fichier est rangé.\n\nRien à faire de ton côté.", None, False),
 }
 
 
@@ -84,7 +80,8 @@ class TwoStyles(Glossary):
             for unread in (False, True):
                 with self.subTest(name, unread=unread):
                     self.assertEqual(bool(screen(marked, unread)), expected)
-                    self.assertEqual(bool(screen(natural, unread)), expected)
+                    if natural is not None:   # a free closing is no longer guessed: an unread one shows « Vérifier »
+                        self.assertEqual(bool(screen(natural, unread)), expected)
 
     def test_the_natural_style_never_guesses_a_go(self):
         for name, (_, natural, expected) in CASES.items():
@@ -97,31 +94,9 @@ class TwoStyles(Glossary):
         self.assertEqual(screen(text, True), ['Vérifier'])
         self.assertEqual(screen(text, False), [])
 
-    def test_checkboxes_are_an_ask_even_once_read(self):
-        self.assertEqual(parc.classer('Écran 1', 'phrase', {'case': True})[0], 4)
-
-
 class FreeClosing(Glossary):
-    def test_a_free_closing_says_nothing_is_expected(self):
-        for text in ("Le fichier est rangé. Rien n'est attendu de toi.",
-                     "C'est publié. Rien n'est en attente de ta part.",
-                     "Le passage tourne encore. Rien n'est attendu de toi d'ici là.",
-                     "Rien n'est attendu de toi pour le moment."):
-            with self.subTest(text):
-                self.assertTrue(parc.rien_a_faire(text, generique=True))
-
-    def test_a_free_closing_with_an_exception_or_a_condition_is_not_one(self):
-        for text in ("Rien d'autre n'est attendu de toi.",
-                     "Rien n'est attendu de toi, sauf le go du client.",
-                     "Si le test passe, rien n'est attendu de toi.",
-                     "Une fois la PR fusionnée, il te restera à écrire au client. Rien ne t'attend au tableau.",
-                     "Rien n'est attendu de toi sur ce point.",
-                     "Rien à faire de ton côté là-dessus pour l'instant."):
-            with self.subTest(text):
-                self.assertFalse(parc.rien_a_faire(text, generique=True))
-
     def test_a_free_closing_never_erases_an_ask(self):
-        text = "Valide le devis avant jeudi.\n\nPour le reste, rien n'est attendu de toi."
+        text = "Tu valides le devis avant jeudi ?\n\nPour le reste, rien n'est attendu de toi."
         self.assertFalse(parc.rien_a_faire(text))
         self.assertEqual(screen(text, False), ['Vérifier'])
 

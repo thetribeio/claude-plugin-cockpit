@@ -16,7 +16,7 @@ import time
 import unittest
 from unittest import mock
 
-from test_cockpit_projets import Base, MONDAY, FRIDAY, MAIL
+from test_cockpit_projets import Base, MONDAY, FRIDAY, THURSDAY, MAIL, local
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PAGE = ROOT / 'skills' / 'mon-studio' / 'assets' / 'page-servie.html'
@@ -75,6 +75,75 @@ class Entries(Base):
         m = self.p.matin_pour_la_page(MONDAY + 120, self.metas, out)
         self.assertNotIn(cle, [x['cle'] for x in m['entre_studio']])
         self.assertEqual(self.block(out)['fermees_depuis_hier'], 0)
+
+
+def rapport(*puces):
+    return "📬 Alpha · nouveautés\nÀ toi de jouer :\nCe qui est entré :\n" + '\n'.join(f'- {p}' for p in puces) + '\n'
+
+
+class Fresh(Base):
+    """« Pour info » shows only fresh news: the fact is of the working day before or today (A), and the run is later than
+    the last visit of the page made before today (B)."""
+
+    def titres(self, when=MONDAY, vu_avant=None):
+        out = self.p.calculer(e={'tableau': [], 'lecture_app': {'etat': 'ok', 'raison': ''}}, maintenant=when,
+                              metas=self.metas, ecrire=False, vu_avant=vu_avant)
+        bloc = self.block(out)
+        return sorted(l['titre'] for l in (bloc or {}).get('lignes', []) if l['type'] == 'entree')
+
+    def test_date_du_fait(self):
+        d = self.p.date_du_fait
+        passage = local(2026, 11, 20, 10, 28)
+        self.assertEqual(d('Slack #alpha (Alex, 30/10 10:12) : la recette', passage), local(2026, 10, 30, 0))
+        self.assertEqual(d('Daily du 19/11', passage), local(2026, 11, 19, 0))
+        self.assertEqual(d('Slack #alpha (Léo, Sam, 19/11 18:05) : fil du 18/11', passage), local(2026, 11, 19, 0))
+        self.assertEqual(d('Un compte rendu sans date', passage), passage)
+        self.assertEqual(d('Rendez-vous le 31/02', passage), passage)   # not a date
+        self.assertEqual(d('Livraison prévue le 25/11, relevé du 19/11', passage), local(2026, 11, 19, 0))   # the future is not a fact
+        self.assertEqual(d('Mail de Tom (30/12)', local(2027, 1, 2, 9)), local(2026, 12, 30, 0))   # year before
+
+    def test_monday_a_thursday_fact_is_old_a_friday_fact_is_fresh(self):
+        self.runs(self.alpha, (FRIDAY, rapport('Daily du jeudi : Slack #a (Alex, 29/10 18:05) : vieux', 'Daily du vendredi : Slack #a (Alex, 30/10 09:10) : frais')))
+        self.assertEqual(self.titres(), ['Daily du vendredi'])
+
+    def test_seen_on_a_previous_day_leaves(self):
+        puce = 'Devis reçu : Mail de Robin (30/10) avec le devis'
+        self.runs(self.alpha, (local(2026, 10, 30, 10), rapport(puce)))
+        self.assertEqual(self.titres(vu_avant=local(2026, 10, 30, 18)), [])                 # seen Friday 18h, run at 10h
+        self.runs(self.alpha, (local(2026, 10, 30, 19), rapport(puce)))
+        self.assertEqual(self.titres(vu_avant=local(2026, 10, 30, 18)), ['Devis reçu'])     # run after the visit
+
+    def test_a_visit_of_today_hides_nothing(self):
+        puce = 'Devis reçu : Mail de Robin (02/11) avec le devis'
+        self.runs(self.alpha, (local(2026, 11, 2, 7), rapport(puce)))
+        self.p.noter_visite(local(2026, 11, 2, 8, 30))
+        vu = self.p.derniere_visite_avant_aujourdhui(local(2026, 11, 2, 9))
+        self.assertIsNone(vu)
+        self.assertEqual(self.titres(vu_avant=vu), ['Devis reçu'])
+
+    def test_visits_are_kept_14_days_and_read_before_today(self):
+        for jour in (1, 2, 20):
+            self.p.noter_visite(local(2026, 10, jour, 12))
+        self.p.noter_visite(local(2026, 11, 2, 8))
+        self.p.noter_visite(local(2026, 11, 2, 9))
+        self.assertEqual(self.p.lire_visites(), [local(2026, 10, 20, 12), local(2026, 11, 2, 9)])
+        self.assertEqual(self.p.derniere_visite_avant_aujourdhui(local(2026, 11, 2, 10)), local(2026, 10, 20, 12))
+
+    def test_five_days_away_shows_only_the_working_day_before_and_today(self):
+        wed = local(2026, 11, 11, 9)   # window from Tuesday 10/11
+        self.runs(self.alpha, (local(2026, 11, 10, 17), rapport('Vieux : Slack #a (Alex, 05/11 10:00) : lundi dernier',
+                                                                  'Veille : Slack #a (Alex, 10/11 16:00) : hier',
+                                                                  'Ce matin : Slack #a (Alex, 11/11 08:00) : aujourd\'hui')))
+        self.assertEqual(self.titres(when=wed, vu_avant=local(2026, 11, 5, 18)), ['Ce matin', 'Veille'])
+
+    def test_the_files_read_follow_the_entries_shown(self):
+        d = pathlib.Path(self.alpha) / '3-dev'
+        d.mkdir()
+        (d / 'vieux.md').write_text('vieux', encoding='utf-8')
+        (d / 'frais.md').write_text('frais', encoding='utf-8')
+        passages = [{'ts': FRIDAY, 'entres': ['Vieux : Slack #a (Alex, 29/10) : x ([source](3-dev/vieux.md))',
+                                              'Frais : Slack #a (Alex, 30/10) : x ([source](3-dev/frais.md))'], 'actions': []}]
+        self.assertEqual(list(self.p.textes_des_entrees(self.alpha, passages, MONDAY)), ['3-dev/frais.md'])
 
 
 class ReadAFile(Base):
@@ -191,6 +260,19 @@ class Page(unittest.TestCase):
         self.assertNotIn('<script>', h)
         self.assertIn('seul le début est affiché', h)
         self.assertIn('>Replier</button>', h)
+
+    def test_a_bullet_that_opens_in_bold_is_a_plain_line_not_a_grid(self):
+        # PM, 2026-11-20: « - **09:41, Ana S.** : annonce son retour » rendered the bold part one character per line.
+        # Cause: « #bloc-matin ul.liste li » (a two-column grid for the rows of the page) also matched the bullets of the
+        # file read in the page, so the bold part and the text became two grid cells. The bullets must be plain items.
+        texte = "## Échanges\n\n- **09:41, Ana S.** : annonce son retour sur le projet.\n- **11:57, Léo B.** : *[Usage]* demande une relecture.\n"
+        out = self.run_page(**self.payload(cliquer=[['data-lire', 'eeeeeeeeeee2']], lire={'texte': texte}))
+        self.assertIn('<li><strong>09:41, Ana S.</strong> : annonce son retour sur le projet.</li>', out['matin'])
+        css = PAGE.read_text(encoding='utf-8')
+        regle = [l for l in css.split('\n') if 'ul.liste .lu li' in l]
+        self.assertTrue(regle, 'no rule makes the bullets of a read file plain items')
+        self.assertIn('display:list-item', regle[0])
+        self.assertIn('#bloc-matin ul.liste .lu li', regle[0])   # three classes and ids deep: it wins over « #bloc-matin ul.liste li »
 
     def test_read_error_says_so(self):
         out = self.run_page(**self.payload(cliquer=[['data-lire', 'eeeeeeeeeee2']], lireErreur='tool_error'))

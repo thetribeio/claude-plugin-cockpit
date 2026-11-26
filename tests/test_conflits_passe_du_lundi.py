@@ -65,7 +65,7 @@ class Semaine(Base):
     def test_a_checked_studio_gets_its_pass_once_a_week(self):
         self.verifie_une_fois()
         avant = F.snapshot(self.studio)
-        passes = self.m.passes_de_la_semaine(self.studios, LUNDI)
+        passes = self.m.passes_du_jour(self.studios, LUNDI)
         self.assertEqual(len(passes), 1)
         x = passes[0]
         self.assertEqual(x['studio'], 'Projet Alpha')
@@ -75,28 +75,26 @@ class Semaine(Base):
         # Nothing written in the documents: only the plan next to the register.
         apres = F.snapshot(self.studio)
         self.assertEqual({k: v for k, v in apres.items() if '.conflits' not in k}, avant)
-        # Tuesday, the same week: nothing again.
-        self.assertEqual(self.m.passes_de_la_semaine(self.studios, LUNDI + 86400), [])
-        # Next Monday: again.
-        self.assertEqual(len(self.m.passes_de_la_semaine(self.studios, LUNDI + 7 * 86400)), 1)
+        # Later the same day: nothing again.
+        self.assertEqual(self.m.passes_du_jour(self.studios, LUNDI + 3600), [])
+        # The next morning: again (nothing was judged).
+        self.assertEqual(len(self.m.passes_du_jour(self.studios, LUNDI + 86400)), 1)
 
-    def test_never_checked_member_or_ingested_studios_are_left_out(self):
-        self.assertEqual(self.m.passes_de_la_semaine(self.studios, LUNDI), [])   # no « Dernier passage »
+    def test_never_checked_or_member_studios_are_left_out_ingested_ones_are_not(self):
+        self.assertEqual(self.m.passes_du_jour(self.studios, LUNDI), [])   # no « Dernier passage »
         self.verifie_une_fois()
         membre = [dict(self.studios[0], role='membre')]
-        self.assertEqual(self.m.passes_de_la_semaine(membre, LUNDI + 7 * 86400), [])
+        self.assertEqual(self.m.passes_du_jour(membre, LUNDI + 86400), [])
         etat = {'nouvelles': [{'ts': dt.datetime.fromtimestamp(LUNDI + 13 * 86400).isoformat(), 'texte': ''}]}
         (self.studio / 'projet' / '.ingestion-auto-state.json').write_text(json.dumps(etat), encoding='utf-8')
-        self.assertEqual(self.m.passes_de_la_semaine(self.studios, LUNDI + 14 * 86400), [])
-        # An ingestion silent for more than 8 days no longer counts.
-        self.assertEqual(len(self.m.passes_de_la_semaine(self.studios, LUNDI + 28 * 86400)), 1)
+        self.assertEqual(len(self.m.passes_du_jour(self.studios, LUNDI + 14 * 86400)), 1)
 
     def test_a_week_too_heavy_waits_for_the_next_monday(self):
         self.verifie_une_fois()
         c = self.m._charger_conflits()
         c.PASSE_MATIN_CARACTERES = 100
         with mock.patch.object(self.m, '_charger_conflits', return_value=c):
-            self.assertEqual(self.m.passes_de_la_semaine(self.studios, LUNDI), [])
+            self.assertEqual(self.m.passes_du_jour(self.studios, LUNDI), [])
         self.assertFalse((self.studio / 'projet' / '.conflits').exists())   # no plan kept
 
     def test_preparer_hands_the_subjects_and_the_instructions(self):
@@ -104,8 +102,8 @@ class Semaine(Base):
         r = self.m.preparer(LUNDI)
         self.assertEqual(len(r['conflits']), 1)
         self.assertIn('`M` (marquage sûr)', r['conflits_consigne'])
-        self.assertEqual(self.m.preparer(LUNDI + 86400).get('conflits'), None)   # once a week
-        self.assertNotIn('conflits_consigne', self.m.preparer(LUNDI + 86400))
+        self.assertEqual(self.m.preparer(LUNDI + 600).get('conflits'), None)   # once a day
+        self.assertNotIn('conflits_consigne', self.m.preparer(LUNDI + 600))
 
     def test_a_failure_never_stops_the_morning_point(self):
         self.verifie_une_fois()
@@ -120,7 +118,7 @@ class Connecteur(Base):
         super().setUp()
         self.mcp = charger('mcp_lundi', SCRIPTS / 'mcp_mon_studio.py')
         self.verifie_une_fois()
-        self.plan = self.m.passes_de_la_semaine(self.studios, LUNDI)[0]['plan']
+        self.plan = self.m.passes_du_jour(self.studios, LUNDI)[0]['plan']
 
     def test_the_judgments_go_to_the_register_and_nothing_is_marked(self):
         roadmap = (self.studio / '2-cadrage' / 'roadmap.md').read_text(encoding='utf-8')

@@ -13,7 +13,7 @@ The refusal is a PreToolUse `permissionDecision: deny` on stdout, exit 0; Claude
 Off with `"controle_modele": false` in ~/Mon Studio/.parc/cockpit.json (or $MON_STUDIO/.parc/cockpit.json), set by
 `install.py switch controle-modele off`. Only in a session of the desktop app (CLAUDE_CODE_HOST_SESSION_ID set, as
 hooks/retirees.py reads it): a terminal session, a `claude -p` or a wake of the connector (whose environment drops the
-CLAUDE_* variables) is never refused. A hook never breaks a session: any error, unreadable input or unknown tool is a
+CLAUDE_* variables) is never refused; nor a session opened outside any Studio (perimetre.py). A hook never breaks a session: any error, unreadable input or unknown tool is a
 silent exit 0, the call goes through.
 """
 import json
@@ -69,6 +69,10 @@ def main():
         return
     if not controle_actif():
         return
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    import perimetre
+    if not perimetre.session_de_studio(donnees.get('cwd')):
+        return   # a session outside any Studio (development, other plugins) is never refused
     print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
                                               'permissionDecisionReason': REFUS}}, ensure_ascii=False))
 

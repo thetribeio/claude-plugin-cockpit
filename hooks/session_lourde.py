@@ -9,7 +9,8 @@ The PM chose a threshold of 300 000 tokens (2026-11-03); this hook works without
   told is kept per session in ~/Mon Studio/.parc/sessions-lourdes.json; a session that shrinks below the threshold
   (a context summary) starts again from zero.
 
-Silent without Mon Studio (no cockpit.json), and never fails a prompt.
+Silent without Mon Studio (no cockpit.json) and in a session opened outside any Studio (perimetre.py), and never
+fails a prompt.
 """
 import json
 import os
@@ -84,6 +85,10 @@ def main():
     sid, transcript = entree.get('session_id'), entree.get('transcript_path')
     if not sid or not transcript:
         return
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    import perimetre
+    if not perimetre.session_de_studio(entree.get('cwd')):
+        return   # only the sessions opened in a Studio are told
     tokens = taille_du_contexte(transcript)
     if tokens is None:
         return

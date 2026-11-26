@@ -1,6 +1,6 @@
 {
   "name": "cockpit",
-  "version": "0.3.11",
+  "version": "0.3.26",
   "description": "Le cockpit du PM : une page épinglée qui dit ce que chaque session Claude attend de toi, projet par projet, le point du matin, le point sur les sessions d'un Studio, et des règles de travail dans toutes tes sessions",
   "author": {
     "name": "theTribe, équipe Produit",

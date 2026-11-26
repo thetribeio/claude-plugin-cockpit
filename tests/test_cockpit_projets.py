@@ -49,7 +49,7 @@ WEDNESDAY_AFTER = local(2026, 11, 4)  # window from Tuesday 03/11 00:00
 
 REPORT = ("📬 Alpha · 3 nouveautés · 1 action pour toi\nÀ toi de jouer :\n- Valider le **devis** avant jeudi.\n"
           "Ce qui est entré :\n- Email client (Léo, 30/10 08:10) : devis reçu. Au Studio : [devis](2-cadrage/devis.md).\n"
-          "- Réunion A (notes, 29/10) : relevé de décisions.\nDoublon probable à fusionner : `a` et `b`.")
+          "- Réunion A (notes, 30/10) : relevé de décisions.\nDoublon probable à fusionner : `a` et `b`.")
 
 
 def load(mon_studio):
@@ -454,6 +454,7 @@ class Connector(Base):
             '- **État** : ouvert\n', encoding='utf-8')
         d = m.projet({'dossier': str(self.alpha)})
         self.assertEqual([c['id'] for c in d['conflits']['ouverts']], ['C1'])
+        m.GARDE_PROJET.etats.clear()   # the view just kept would be served as fresh: compute it again
         with mock.patch.object(m, 'charger_projets', side_effect=SyntaxError('cassé')):
             d = m.projet({'dossier': str(self.alpha)})
         self.assertIsNone(d['conflits'])

@@ -694,6 +694,52 @@ def tranches(texte):
     return sortie
 
 
+# Cases kept in the register for the record, never shown as conflicts in the tab's journal (PM, Q16, 2026-11-23): what
+# the reprise of 10/11 took in that was not two values of one fact (a duplicate marked, a banner put, a question
+# closed, a word left). The register's format allows no field added to an existing case, so the list lives next to
+# it, in `projet/.conflits/hors-journal.json`: {"cas": {"C4": "<reason, in words>"}, "le": "AAAA-MM-JJ", "par": "…"}.
+def chemin_hors_journal(studio):
+    return pathlib.Path(studio) / DIR_CONFLITS / 'hors-journal.json'
+
+
+def hors_journal(studio, garde=None):
+    """{case id: reason} of the cases the journal does not show; {} when none or unreadable. `garde`: the copy kept
+    in Mon Studio's snapshot, read when the Studio's own file cannot be (the Drive refused)."""
+    try:
+        x = __import__('json').loads(chemin_hors_journal(studio).read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        x = {}
+    except (OSError, ValueError, UnicodeDecodeError):
+        x = garde
+    x = x if isinstance(x, dict) else {}
+    cas = x.get('cas')
+    return {k: str(v) for k, v in cas.items() if isinstance(k, str) and CAS_ID.match(k)} if isinstance(cas, dict) else {}
+
+
+def mettre_hors_journal(studio, ids, raison, par, jour=None):
+    """Adds `ids` (cases of the register) to the list; returns the ids added. Nothing is written in the register."""
+    import json
+    connus = {c['id'] for c in lire_fichier(chemin_du_studio(studio))['cas']}
+    inconnus = [i for i in ids if i not in connus]
+    if inconnus:
+        raise ValueError(f"cas absents du registre : {', '.join(inconnus)}")
+    x = _lire_json(chemin_hors_journal(studio)) or {}
+    cas = dict(hors_journal(studio))
+    ajoutes = [i for i in dict.fromkeys(ids) if i not in cas]
+    cas.update({i: raison for i in ajoutes})
+    chemin = chemin_hors_journal(studio)
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    tmp = chemin.with_name('.' + chemin.name + '.tmp')
+    tmp.write_text(json.dumps(dict(x, cas=dict(sorted(cas.items(), key=lambda kv: int(kv[0][1:]))),
+                                   le=iso(jjmmaaaa(jour)) if jour else dt.date.today().isoformat(), par=par),
+                              ensure_ascii=False, indent=1), encoding='utf-8')
+    os.replace(tmp, chemin)
+    return ajoutes
+
+
+CAS_ID = re.compile(r'^C[1-9][0-9]*$')
+
+
 def etat_du_registre(texte, vu=0, reglages=None, aujourdhui=None):
     """What Mon Studio shows of a register: {'ouverts', 'nouveaux' (open cases above `vu`), 'a_traiter' (open, by
     level), 'jours' (days without a treatment, counted from the last answer or from the oldest open case if it came
@@ -772,6 +818,7 @@ def copier_dans_mon_studio(studio, maintenant=None):
     cles = [k for k in tout['dossiers'] if os.path.realpath(k) == vrai] or [_dossier_mon_studio(studio)]
     copie = {'conflits': texte, 'conflits_vu': _lire_json(pathlib.Path(studio) / DIR_CONFLITS / 'vu.json'),
              'conflits_reglages': _lire_json(pathlib.Path(studio) / DIR_CONFLITS / 'reglages.json'),
+             'conflits_hors_journal': _lire_json(chemin_hors_journal(studio)),
              'conflits_copie': time.time() if maintenant is None else maintenant}
     for cle in cles:
         entree = tout['dossiers'].get(cle)

@@ -83,7 +83,8 @@ class Page(unittest.TestCase):
             data.write_text(json.dumps({'lignes': [ligne]}, ensure_ascii=False))
             r = subprocess.run([shutil.which('node'), str(RUNNER), str(PAGE), str(data)], capture_output=True, text=True, timeout=60)
         out = json.loads(r.stdout)
-        self.assertIn('<ul class="attendu"><li>Q14 · Mode de partage</li><li>J&#39;attends les 3 ajouts</li></ul>', out['tableau'])
+        # The bullet that is the title itself is not repeated in the unfold (PM, 2026-11-19).
+        self.assertIn('<ul class="attendu"><li>Q14 · Mode de partage</li></ul>', out['tableau'])
         self.assertIn('<dt>Apparue</dt>', out['tableau'])
         self.assertNotIn('Déclencheur', out['tableau'])
         self.assertNotIn('Juste avant', out['tableau'])

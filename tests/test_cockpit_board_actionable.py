@@ -166,14 +166,14 @@ COMMANDE = ("Relis la proposition de tri des points de la réunion d'équipe de 
 
 
 class ShortTitle(Base):
-    def test_a_long_request_has_a_title_cut_on_a_word_and_its_full_text(self):
+    def test_a_long_request_has_a_title_cut_at_a_natural_break_and_its_full_text(self):
         self.runs(self.alpha, (MONDAY - 600, report(COMMANDE)))
         line = self.block(self.compute())['lignes'][0]
-        self.assertLessEqual(len(line['titre']), self.p.TITRE_COURT + 1)
-        self.assertTrue(line['titre'].endswith('…'))
-        coupe = line['titre'][:-1]
+        self.assertLessEqual(len(line['titre']), self.p.TITRE_COURT)
+        self.assertNotIn('…', line['titre'])   # never cut with an ellipsis (PM, 2026-11-19)
+        coupe = line['titre']
         self.assertTrue(COMMANDE.startswith(coupe))
-        self.assertEqual(COMMANDE[len(coupe)], ' ', 'cut on a word')
+        self.assertIn(COMMANDE[len(coupe)], ' ,;:', 'cut at a break')
         self.assertNotIn('/st', line['titre'][-12:])
         self.assertEqual(line['texte'], COMMANDE)
         self.assertEqual(line['commande'], '/studio:auto-ingest tri')
@@ -182,7 +182,7 @@ class ShortTitle(Base):
         t = self.p.titre_court('Pour lancer le tri de la réunion de jeudi avec toute l\'équipe, il faudra taper '
                                '/studio:auto-ingest tri dans la session')
         self.assertNotIn('/studio', t)
-        self.assertTrue(t.endswith('…'))
+        self.assertNotIn('…', t)
 
     def test_a_short_title_before_a_colon_and_a_short_request_whole(self):
         self.assertEqual(self.p.titre_court('Relance du devis : le client attend notre réponse depuis lundi, avec le planning'),
@@ -201,11 +201,11 @@ class ShortTitlePage(unittest.TestCase):
         self.assertNotIn('data-deplier', r)
 
     def test_the_unfold_shows_the_full_text_once(self):
-        titre = 'Relis la proposition de tri des points de la réunion…'
+        titre = 'Relis la proposition de tri des points de la réunion'
         out, _ = run_page(liste_projets=liste(a_toi('aaaaaaaaaaa1', titre, COMMANDE, commande='/studio:auto-ingest tri')))
         r = rangee(out['tableau'], titre)
         self.assertIn('class="detail"', r)
-        self.assertEqual(r.count('Relis la proposition de tri'), 2, 'the title, then the full text, not the title twice')
+        self.assertEqual(r.count('Relis la proposition de tri'), 1, 'the title, then only what it does not say (PM, 2026-11-19)')
         self.assertIn('au plus tard demain matin', r)
         self.assertIn('<code>/studio:auto-ingest tri</code>', r)
         self.assertNotIn('Relevé par l&#39;ingestion', r, 'never a name that is not a session')
@@ -393,7 +393,7 @@ class SessionColumnOfARequest(unittest.TestCase):
         self.assertNotIn('<button', cellule)
         self.assertIn('Slack', cellule)
         self.assertNotIn('Message Slack', cellule)
-        self.assertIn(f'href="{SLACK}"', r, 'the link to Slack is its own button')
+        self.assertIn(f'data-slack="{SLACK}"', r, 'the link to Slack is its own button (opened in the app, Q14)')
 
 
 if __name__ == '__main__':

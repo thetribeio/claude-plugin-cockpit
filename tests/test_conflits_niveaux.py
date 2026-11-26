@@ -317,7 +317,7 @@ class Passe(Base):
     def test_pass_registers_and_keeps_markings_for_the_go(self):
         avant = F.snapshot(self.studio)
         code, out = self.run_cli('passe', self.studio, '--estimer')
-        self.assertIn('Passe du lundi, dans le point du matin', out)
+        self.assertIn('Passe du matin, chaque jour', out)
         self.assertNotIn('Haiku', out)
         self.assertEqual(F.snapshot(self.studio), avant)
         code, out = self.run_cli('passe', self.studio)

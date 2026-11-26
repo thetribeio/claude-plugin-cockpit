@@ -77,10 +77,11 @@ class EveryNeedIsMetOrSetAside(unittest.TestCase):
         self.assertEqual(len(starts), 1)
 
     def test_2_nothing_clears_a_session_any_more(self):
-        # the only PreToolUse allowed is the model control on launches, which clears nothing
+        # the only PreToolUse allowed are the model controls on launches (0.3.12: the scale too), which clear nothing
         pre = [(m, c) for e, m, c in commands() if e == 'PreToolUse']
-        self.assertEqual([m for m, c in pre], ['mcp__ccd_session__start_session|Agent'])
+        self.assertEqual([m for m, c in pre], ['mcp__ccd_session__start_session|Agent'] * 2)
         self.assertIn('hooks/modele_lancement.py', pre[0][1])
+        self.assertIn('hooks/bareme_modele.py', pre[1][1])
         self.assertFalse((ROOT / 'hooks' / 'remise_a_zero.py').exists())
 
     def test_3_the_tools_of_mon_studio_go_to_its_folder(self):
@@ -184,7 +185,8 @@ class RulesHook(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if not k.startswith(('MON_STUDIO', 'CLAUDE'))}
         env.update(HOME=str(self.home))
         return subprocess.run([sys.executable, str(ROOT / 'hooks' / 'regles.py'), *args], capture_output=True,
-                              text=True, env=env, timeout=30).stdout
+                              text=True, env=env, timeout=30,
+                              input=json.dumps({'cwd': str(self.home / 'Mon Studio')})).stdout   # a session in a Studio
 
     def test_the_five_rules_when_none_is_imported(self):
         out = self.run_rules()
@@ -216,7 +218,8 @@ class RulesHook(unittest.TestCase):
         (cmd,) = [c for e, m, c in commands() if 'hooks/regles.py' in c]
         env = {k: v for k, v in os.environ.items() if not k.startswith(('MON_STUDIO', 'CLAUDE'))}
         env.update(HOME=str(self.home), CLAUDE_PLUGIN_ROOT=str(ROOT))
-        out = subprocess.run(['/bin/sh', '-c', cmd], capture_output=True, text=True, env=env, timeout=30).stdout
+        out = subprocess.run(['/bin/sh', '-c', cmd], capture_output=True, text=True, env=env, timeout=30,
+                             input=json.dumps({'cwd': str(self.home / 'Mon Studio')})).stdout
         self.assertIn('Règles de travail du PM', out)
 
 

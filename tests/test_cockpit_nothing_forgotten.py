@@ -139,8 +139,11 @@ class Reminder(unittest.TestCase):
         return cmd
 
     def run_command(self, home):
+        # The reminder is guarded by perimetre.py (real plugin root); the session sits in Mon Studio.
+        root = pathlib.Path(__file__).resolve().parent.parent
         return subprocess.run(['/bin/sh', '-c', self.command()], capture_output=True, text=True, timeout=30,
-                              env=dict(os.environ, HOME=str(home)))
+                              env=dict(os.environ, HOME=str(home), CLAUDE_PLUGIN_ROOT=str(root)),
+                              input='{}', cwd=str(pathlib.Path(home) / 'Mon Studio') if (pathlib.Path(home) / 'Mon Studio').is_dir() else None)
 
     def test_it_reminds_where_mon_studio_is_installed(self):
         with tempfile.TemporaryDirectory() as d:

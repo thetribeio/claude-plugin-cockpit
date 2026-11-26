@@ -2,7 +2,9 @@
 // tests/test_cockpit_authorizations.py. Usage: node tests/tester-epinglee.js <page.html> <payload.json>
 // The payload holds `lignes` (what the tool « lignes » returns), and may hold `autorisations` (what the tool
 // « autorisations » returns), `attentes` (what the tool « attentes » returns), `cliquer` (a list of [data attribute,
-// value] to click in order), `deciderErreur` and `repondreErreur` (the error code the tool « decider » or « repondre »
+// value] to click in order), `frais` (the field of that name of « lignes »: false for a board the connector computes
+// again), `lancerMs` (the page's timers of that delay are run once the board is shown), `puisFrais` (the same board comes
+// again with `frais: true`, or with the lines `puisLignes`; `redessine` says if the board was drawn again), `deciderErreur` and `repondreErreur` (the error code the tool « decider » or « repondre »
 // throws), `repondre` (what « repondre » returns, Q40: { mode, raison, texte, clic }), `anciennes` (the « Anciennes » lines of the board), `reclassement` (true: the switch of the reclassement button is on), `lire` (what the tool « lire » returns) and `lireErreur`. Prints a JSON of what the page shows and of the tool calls it made.
 // The page as the app runs it (option B, Q13): the shell (page-epinglee.html) asks the connector's `gabarit` tool for
 // the served code (page-servie.html), then runs it in a <script> filled by textContent. The file given is either one;
@@ -37,7 +39,7 @@ const doc = { getElementById: el, addEventListener(t, fn) { (ecoutes[t] = ecoute
   head: { appendChild(x) { injectes.push(x.tagName); } },
   // The loader's <script>: run where the page runs, as the browser does when it is appended.
   body: { appendChild(x) { injectes.push(x.tagName); if (x.tagName === 'SCRIPT') vm.runInContext(x.textContent, ctx); } } };
-const appels = [], veilles = {}, srv0 = 'host:mon-studio';
+const appels = [], veilles = {}, srv0 = 'host:mon-studio', invalidations = [];
 const now = Date.now();
 const mcp = {
   watchTool(srv, outil, args, cb) { if ((entree.refuserVeille || []).includes(outil)) throw new Error('not_in_manifest'); veilles[outil] = cb; },
@@ -49,6 +51,7 @@ const mcp = {
     appels.push([outil, args]);
     if (outil === 'decider' && entree.deciderErreur) { const e = new Error('refusé'); e.code = entree.deciderErreur; throw e; }
     if (outil === 'repondre' && entree.repondreErreur) { const e = new Error('session partie'); e.code = entree.repondreErreur; throw e; }
+    if (outil === 'ouvrir' && entree.ouvrirErreur) { const e = new Error('échec'); e.code = entree.ouvrirErreur; throw e; }
     if (outil === 'attentes') return { payload: entree.attentes || { actif: false, attentes: [] } };
     if (outil === 'repondre' && entree.repondre) return { payload: entree.repondre };
     if (outil === 'projet') return { payload: entree.projet || { introuvable: true } };
@@ -57,17 +60,17 @@ const mcp = {
     if (outil === 'autorisations') return { payload: entree.autorisations || { demandes: [], decisions: [], actif: false } };
     return { payload: { decide: true } };
   },
-  async invalidate() { return {}; },
+  async invalidate(srv, outil) { invalidations.push(outil); return {}; },
   async listTools() { return { servers: [{ server: srv0, tools: (entree.outils || []).map((name) => ({ name, description: '' })) }] }; },
 };
 // Une horloge que le test avance (avancerMs) : la page relit Date.now().
 let decalage = 0;
 class Horloge extends Date { static now() { return Date.now() + decalage; } }
-const minuteurs = [];
+const minuteurs = [], rappels = [];
 // « stockage »: the browser's localStorage (key → value) when the test gives one; absent, any access throws, as in a
 // private window. « stockageLu » in the output: what the page left in it.
 const stockage = entree.stockage ? Object.assign({}, entree.stockage) : null;
-const ctx = { document: doc, claude: { use: async () => mcp }, navigator: {}, setTimeout(fn, ms) { minuteurs.push(ms); return 0; }, clearTimeout() {},
+const ctx = { document: doc, claude: { use: async () => mcp }, navigator: {}, setTimeout(fn, ms) { minuteurs.push(ms); rappels.push([ms, fn]); return 0; }, clearTimeout() {},
   setInterval() { return 0; }, requestAnimationFrame() { return 0; }, cancelAnimationFrame() {}, console, Date: Horloge, Promise,
   Object, Array, String, Number, Math, JSON, RegExp, isNaN, parseInt, Error };
 if (stockage) ctx.localStorage = { getItem: (k) => (k in stockage ? stockage[k] : null), setItem: (k, v) => { stockage[k] = String(v); } };
@@ -81,6 +84,7 @@ const tick = async () => { for (let i = 0; i < 20; i++) await new Promise((r) =>
     liste_projets: entree.liste_projets || null, matin: entree.matin || null, lecture_app: entree.lecture_app || undefined,
     mise_en_route: entree.mise_en_route || undefined, conflits: entree.conflits, rangees: entree.rangees || [], a_ranger: entree.a_ranger || [], ranger_texte: entree.ranger_texte || '',
     sans_action: entree.sans_action || [], plus_tard: entree.plus_tard || {}, reclassement: entree.reclassement || undefined };
+  if ('frais' in entree) page.frais = entree.frais;
   if (veilles.lignes) veilles.lignes({ type: 'data', result: { payload: page } });   // none when the code was not served
   if (veilles.autorisations && entree.autorisations) veilles.autorisations({ type: 'data', result: { payload: entree.autorisations } });
   if (veilles.attentes && entree.attentes) veilles.attentes({ type: 'data', result: { payload: entree.attentes } });
@@ -89,6 +93,18 @@ const tick = async () => { for (let i = 0; i < 20; i++) await new Promise((r) =>
   if (entree.anciennes && veilles.lignes) veilles.lignes({ type: 'data', result: { payload: Object.assign({}, page, { anciennes: entree.anciennes.map((l) => Object.assign({}, l, { depuis: l.depuis || now - 9 * 86400000 })) }) } });
   await tick();
   const premier = (els.boite || {}).innerHTML || '';
+  if (entree.lancerMs) {
+    for (const [ms, fn] of rappels.splice(0)) if (ms === entree.lancerMs) fn();
+    await tick();
+  }
+  let redessine = null;
+  if (entree.puisFrais && veilles.lignes) {
+    el('boite').innerHTML = '<!-- marque -->';
+    const lignes2 = entree.puisLignes ? entree.puisLignes.map((l) => Object.assign({}, l, { depuis: l.depuis || now - 3600000 })) : lignes;
+    veilles.lignes({ type: 'data', result: { payload: Object.assign({}, page, { lignes: lignes2, frais: true, genere: now + 5000 }) } });
+    await tick();
+    redessine = el('boite').innerHTML !== '<!-- marque -->';
+  }
   if (entree.avancerMs) decalage = entree.avancerMs;
   if (veilles.attentes && entree.attentesApres) veilles.attentes({ type: 'data', result: { payload: entree.attentesApres } });
   else if (entree.avancerMs && veilles.attentes && entree.attentes) veilles.attentes({ type: 'data', result: { payload: entree.attentes } });
@@ -137,7 +153,7 @@ const tick = async () => { for (let i = 0; i < 20; i++) await new Promise((r) =>
     sujetsReplies: (g('projet-sujets').style || {}).display === 'none', journalReplie: (g('projet-journal').style || {}).display === 'none',
     sujetsOuvert: (g('projet-sujets-bascule').attrs || {})['aria-expanded'] || '', stockageLu: stockage,
     miseEnRoute: g('mise-en-route').innerHTML || '', miseEnRouteHidden: !!g('bloc-mise-en-route').hidden,
-    appels, veilles: Object.keys(veilles),
+    appels, veilles: Object.keys(veilles), invalidations, redessine,
     coquille: g('mon-studio').innerHTML || '', coquillePanne: g('mon-studio >').textContent || '', injectes,
   }));
 })().catch((e) => { console.error(e && e.stack || e); process.exit(1); });

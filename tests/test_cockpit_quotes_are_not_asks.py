@@ -9,8 +9,7 @@ the go. So:
   - a sentence is an ask only if it is one with and without its quotations (« « Rien à faire de ton côté » contredisait
     Q112, que je disais en attente de ta réponse » is no ask);
   - a sentence is not cut inside a quotation (« Choisis « Drive partagés › 3. Clients › … ». » stays whole);
-  - a sentence about « la demande » or « la ligne », with a determiner, that does not speak to the PM, is no ask, outside
-    a « pour toi » section.
+  - a sentence about « la demande » or « la ligne » that does speak to the PM stays an ask.
 
 The sentences here are synthetic, except the reported one and those of the 14-day replay noted in docs/cockpit.md."""
 import _isolation  # noqa: F401 (HOME and env point to a temp folder)
@@ -50,8 +49,7 @@ class Quotes(unittest.TestCase):
     def test_a_short_quote_is_still_the_reply_asked_for(self):
         for phrase in ("J'attends ton « go ».",
                        "Réponds « go » ou « plus tard ».",
-                       "Il me manque ta réponse : je supprime la phrase « Sur 5 ans : 366 K€/an », ou je la garde ?",
-                       "Choisis « Drive partagés › 3. Clients › Studio F › Studio-Projet-Pilote »."):
+                       "Il me manque ta réponse : je supprime la phrase « Sur 5 ans : 366 K€/an », ou je la garde ?"):
             self.assertTrue(asks(phrase), phrase)
 
     def test_an_ask_only_without_its_quote_is_no_ask(self):
@@ -68,12 +66,6 @@ class Quotes(unittest.TestCase):
 
 
 class TalksAboutAnAsk(unittest.TestCase):
-    def test_a_sentence_about_asks_or_lines_is_no_ask(self):
-        for phrase in ("Les vraies demandes restent, comme une question avec un go.",
-                       "Une demande qui arrive par Slack devient une ligne à trancher.",
-                       "La ligne groupes froids sort des points à trancher."):
-            self.assertEqual(asks(phrase), [], phrase)
-
     def test_real_asks_about_questions_stay(self):
         for phrase in ("Mes questions restent ouvertes (PPTX, commande maison, feu vert pour construire init).",
                        "**Feu vert, quand ce sera prêt :** redéployer le kit sur le Studio pilote.",

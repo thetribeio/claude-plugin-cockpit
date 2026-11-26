@@ -32,11 +32,12 @@ class DisabledHooksSilent(unittest.TestCase):
             parc = Path(home) / 'Mon Studio' / '.parc'
             parc.mkdir(parents=True)
             (parc / 'cockpit.json').write_text(json.dumps(state, indent=2) + '\n', encoding='utf-8')
-            env = dict(os.environ, HOME=home, CLAUDE_PLUGIN_ROOT='/nonexistent')
+            # The real plugin root: the reminder line is guarded by perimetre.py; the session sits in Mon Studio.
+            env = dict(os.environ, HOME=home, CLAUDE_PLUGIN_ROOT=str(HOOKS.parent.parent))
             out = ''
             for command in commands():
                 out += subprocess.run(['bash', '-c', command], env=env, input='{}', capture_output=True,
-                                      text=True, timeout=20).stdout
+                                      text=True, timeout=20, cwd=str(Path(home) / 'Mon Studio')).stdout
             return out
 
     def test_every_hook_starts_with_the_disabled_guard(self):

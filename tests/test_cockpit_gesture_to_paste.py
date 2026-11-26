@@ -1,12 +1,11 @@
-"""Tests: a prompt handed to the PM to paste elsewhere is an ask: python3 -m unittest discover -s tests
+"""Tests: a prompt handed to the PM to paste elsewhere: python3 -m unittest discover -s tests
 
 The light foreman, 2026-10-26: the session « Kit COPIL » ended its message with « Pour le tester sur le COPIL n°10,
 colle ceci dans ta session du projet … : », the prompt in a code block, then « Rien d'autre à faire de ton côté. ».
-It took no number, and Mon Studio showed nothing: the gesture was set aside as one « the session does not wait on to
-go on », and a message read without a probable ask makes no line (Q40). A real ask was lost. So:
+Mon Studio no longer guesses gestures in free text (an imperative, a block to paste): the ask is a numbered question,
+or the line « Ne dit pas si elle attend » on an unread message. What is kept here:
 
-  - a gesture followed by a block (« colle ceci : » then ```…```) is an ask, a « Vérifier » line while unnumbered;
-  - « Rien à faire de ton côté » (or « Rien d'autre… ») never cancels such a gesture;
+  - a block shown without a gesture is no ask, and an unnumbered gesture is not guessed;
   - the session-start instruction of a chantier names the prompt to paste among the gestures that take a number,
     and forbids ending such a message with « Rien (d'autre) à faire de ton côté »; the reminder at each of the PM's
     messages says it too.
@@ -57,21 +56,11 @@ class GestureToPaste(unittest.TestCase):
         s['lignes'], s['reste'], s['tete'], s['prio'] = parc.trier(s.get('texte', ''))
         return parc.tableau([s], [card('local_kit', 'Kit COPIL')], [], 3650, NOW, {})
 
-    def test_the_real_message_makes_a_line_even_once_read(self):
-        (l,) = self.lines(REAL)
-        self.assertEqual((l['type'], l['lecture']), ('check', 'a_verifier'))
-        self.assertIn('colle ceci dans ta session du projet pilote', l['suite'])
-
-    def test_rien_a_faire_never_cancels_a_block_to_paste(self):
-        text = REAL.replace("Rien d'autre à faire de ton côté.", "Rien à faire de ton côté.")
-        self.assertTrue(parc.rien_a_faire(text))
-        self.assertEqual(len(self.lines(text)), 1)
-
     def test_a_block_shown_without_a_gesture_is_no_ask(self):
         text = "Voici la commande que j'ai lancée :\n\n```\npython3 parc.py --controle\n```\n\nRien à faire de ton côté."
         self.assertEqual(self.lines(text), [])
 
-    def test_a_gesture_without_a_block_keeps_its_sort(self):
+    def test_a_gesture_is_not_guessed(self):
         _, _, notes, _ = parc.trier("Tu peux fermer cette session.", expliquer=True)
         self.assertEqual([n['prio'] for n in notes], [None])
 

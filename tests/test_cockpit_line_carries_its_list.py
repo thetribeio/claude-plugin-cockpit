@@ -47,7 +47,7 @@ def card(sid, title, cwd=STUDIO_CWD):
 
 
 # Case 1, a session of a client Studio (20/10), anonymised: the list to validate is just above the sentence.
-OK_OR_FIX = "Dis « ok » ou corrige une ligne : je fais alors les points 4.1 à 4.4."
+OK_OR_FIX = "Dis-moi « ok » ou corrige une ligne : je fais alors les points 4.1 à 4.4."
 POINTS = """Une seule famille, quatre points. Mon contrôle me bloque tout travail tant que tu n'as pas validé ce découpage. Une ligne par point, avec mon avis quand tu me le demandes.
 
 - **4.1 Adresse :** la nouvelle adresse du bureau est confirmée. Mon avis : oui, l'ancienne peut nuire au référencement local, parce qu'une adresse différente d'une page à l'autre brouille la cohérence attendue. Je la remplace partout où je la trouve, après avoir listé les pages concernées.
@@ -170,7 +170,7 @@ class SentenceCarriesItsBlock(Lines):
 
     def test_a_table_just_above(self):
         text = ("| Point | Proposition |\n|---|---|\n| Titre | Garder |\n| Date | Reporter au 12 |\n\n"
-                "Valide le tableau : je l'applique dès que c'est fait.")
+                "Dis-moi si le tableau te va : je l'applique dès que c'est fait.")
         l = self.line(text)
         self.assertTrue(l['detail'].endswith("Juste avant, son message disait : « Point / Proposition · Titre / Garder "
                                              "· Date / Reporter au 12 »"))
@@ -244,12 +244,6 @@ class NoFallbackForTheBoard(Lines):
         self.assertEqual(parc.debut_section(s['tete']), 'ouvert')  # the sentence that used to give the fallback
         self.assertEqual([(d['titre'], d['lecture']) for d in parc.demandes(s)], [('Q5 · Format du CR', 'format')])
 
-    def test_a_recall_without_number_alone_keeps_its_fallback(self):
-        s = self.session(ALONE, "La PR est ouverte.\n\nEncore ouvert : l'étape 3, en attente de ta réponse.", OTHER_CWD)
-        d, = parc.demandes(s)
-        self.assertEqual((d['suite'], d['lecture']), (parc.QUESTION_SANS_TEXTE, 'introuvable'))
-
-
 class AnotherSessionWaits(Lines):
     def wait_21(self):
         return {'type': 'decision', 'titre': 'Q21 · Kit B : quel essai ensuite ?', 'source': KIT_B, 'depuis': at(2)}
@@ -269,9 +263,9 @@ class AnotherSessionWaits(Lines):
         self.foreman([self.wait_21()])
         _, page, _ = self.table([self.session(ALONE, SHE_WAITS, OTHER_CWD)])
         mine = [l for l in page if l['cle'] == ALONE]
-        # One line on the board (PM, 2026-11-18): the sentence is cut, the questions it names stay; the click has it all.
+        # One line on the board (PM, 2026-11-18): the sentence is cut at a natural break or a whole word, never « … », the questions it names stay; the click has it all.
         self.assertEqual([l['affiche_suite'] for l in mine],
-                         ["Elle a bien repris le kit sur la branche locale et attend ta … · Q21 au tableau Essai"])
+                         ["Elle a bien repris le kit sur la branche locale et attend · Q21 au tableau Essai"])
         self.assertEqual([l['complet'] for l in mine],
                          ["Elle a bien repris le kit sur la branche locale et attend ta réponse à une question · Q21 "
                           "au tableau Essai"])

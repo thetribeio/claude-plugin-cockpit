@@ -130,11 +130,15 @@ class DueDate(Base):
         self.assertIn('- Répondre au client sur le planning (échéance 09/11) · à toi de jouer (ingestion)', md)
         self.assertNotIn('mail.google.com', md)
 
-    def test_soonest_due_date_first_then_the_oldest(self):
+    def test_close_due_date_first_then_the_most_recent(self):
+        # PM, Q8, 2026-11-26: the order of the board. A due date within 3 days (or passed) first, the oldest due date
+        # first; then the most recent request first; a far due date (11-10, a week off) does not reorder.
         self.runs(self.alpha, (FRIDAY, report('Relire le planning', 'Valider la maquette (échéance 2026-11-10)')),
                   (FRIDAY + 60, report('Envoyer le devis (échéance 2026-11-03)', 'Caler le point')))
         titles = [l['titre'] for l in self.block(self.compute())['lignes']]
-        self.assertEqual(titles, ['Envoyer le devis', 'Valider la maquette', 'Relire le planning', 'Caler le point'])
+        self.assertEqual(titles[0], 'Envoyer le devis')
+        self.assertEqual(titles[1], 'Caler le point', 'the passage of the next minute is the most recent')
+        self.assertEqual(sorted(titles[2:]), ['Relire le planning', 'Valider la maquette'])
 
     def test_old_without_a_due_date_goes_to_anciennes_a_late_one_never(self):
         # A passed due date used to fold the request into « Anciennes »; it now keeps it in sight, « en retard »

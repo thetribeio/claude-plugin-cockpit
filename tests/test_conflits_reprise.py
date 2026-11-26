@@ -377,7 +377,7 @@ class MonStudio(Base):
         self.etat[cle] = {'studio': self.d, 'type': 'verifier', 'titre': 't', 'premiere': 0, 'vue': 0, 'fermee': 1, 'par': 'main'}
         purgees = [k for k, l in self.etat.items() if l['type'] != 'verifier' and l['fermee']]
         self.assertEqual(purgees, [])
-        self.assertIn("l['type'] != 'verifier'", (SCRIPTS / 'projets.py').read_text(encoding='utf-8'))
+        self.assertIn("l['type'] not in ('verifier', 'repasse')", (SCRIPTS / 'projets.py').read_text(encoding='utf-8'))
 
 
 class LePM(unittest.TestCase):
@@ -394,6 +394,11 @@ class LePM(unittest.TestCase):
         fiche = "| **PM** | Dominique Martin ⚠️ *Remplacé le 2026-10-28 par « Camille Durand », source x — rattrapage du 2026-11-09* |\n"
         self.assertEqual(projets.pm_dans(fiche), 'Camille Durand')
         self.assertEqual(projets.pm_dans('| **PM** | Dominique Martin ⚠️ *à confirmer* |\n'), 'Dominique Martin')
+        # A sheet whose identity block is a code block of « key: value » lines (PM, 2026-11-20).
+        bloc = "```\nnom: Essai\npm: Camille Durand (PM effectif, kick-off interne)\nlead_pm_proposition: Léo Roux (Lead PM)\n```\n"
+        self.assertEqual(projets.pm_dans(bloc), 'Camille Durand')
+        self.assertIsNone(projets.pm_dans("```\nlead_pm_proposition: Léo Roux (Lead PM)\n```\n"))
+        self.assertIsNone(projets.pm_dans("```\npm: à compléter\n```\n"))
 
     def test_the_responsible_row_marked_pm(self):
         fiche = '| **Responsable** | Camille Durand (PM), Sacha Petit (CTO, tech lead), Lou Bernard (Design) |\n'

@@ -10,9 +10,14 @@ tokens. Les outils :
                    ses nouveaux non lus, sa relance, la session qui les traite ; null si leur lecture échoue), les fils rouges de chaque Studio et la liste par projet de
                    projets.py (champ `liste_projets`) et le point du matin de matin.py (champ `matin`), chacun null si son calcul échoue (lecture seule, annoté comme tel : l'app ne
                    demande rien)
+                   ; rendu aussitôt quand un tableau a déjà été calculé (en mémoire, ou gardé dans
+                   ~/Mon Studio/.parc/lignes-derniere.json par une instance précédente), avec `frais: false`, et recalculé
+                   en fond : un second appel quelques secondes plus tard rend le tableau frais (`frais: true`). Après un
+                   outil qui écrit (clore, repondre, decider…), le tableau est recalculé avant de répondre
     projet         la vue d'un seul projet (parc.vue_projet_pour_la_page), plus `conflits` : les cas ouverts du registre
                    des conflits du Studio et la session « <Projet> · Conflits Studio » (projets.conflits_du_projet), null
-                   si leur lecture échoue (lecture seule)
+                   si leur lecture échoue (lecture seule) ; comme `lignes`, rendue aussitôt quand une vue de ce dossier
+                   a déjà été calculée (`frais: false`) et recalculée en fond, un calcul à la fois par dossier
     ouvrir         ouvre une session dans l'app (`open claude://…`) ; pas en lecture seule (il lance `open` et peut
                    écrire le presse-papiers) ; avec `ranger`, copie seulement la demande d'archivage des sessions
                    finies (bouton « Ranger », PM Q5 2026-11-18), que le PM colle lui-même ; avec `copier`, met d'abord
@@ -45,17 +50,18 @@ tokens. Les outils :
                    `contenu`, après la vérification de `matin.py ecrire` (objet JSON, `genere_le` lisible), et rien
                    d'autre (pas en lecture seule). Autorisé par la règle `mcp__mon-studio__matin_ecrire`, que seul
                    `install.py apply --autorisations` pose, après le go du PM (2026-11-10).
-    conflits_juger pour la tâche du point du matin, le lundi : les jugements de la passe des conflits d'un Studio
+    conflits_juger pour la tâche du point du matin, chaque jour : les jugements de la passe des conflits d'un Studio
                    (`plan`, donné par `matin.py preparer`), inscrits au registre du Studio par `conflits.py`
                    (`cloturer`) ; rien n'est marqué dans les documents (pas en lecture seule). Seulement un plan de
                    passe, d'un Studio de projets.json, pas encore jugé. Autorisé par la règle
                    `mcp__mon-studio__conflits_juger`, posée de même (PM, Q18, 2026-11-15).
 
-`decider`, `repondre` et `clore` sont faits pour la page : leur description dit à une session de ne pas les appeler,
-rien ne l'en empêche. Le protocole n'identifie pas l'appelant. Seule une instance lancée avec CLAUDE_PROJECT_DIR posé
-limite `lire` et `ouvrir` d'un fichier au Studio de ce dossier et refuse `decider` et `repondre` ; les instances que
-l'app lance, celles que la page et les sessions de l'app appellent, ne portent pas cette variable : ce garde-fou ne
-s'y applique pas.
+`decider`, `repondre` et `clore` sont faits pour la page. Le protocole n'identifie pas l'appelant : c'est la règle de
+refus que `install.py apply` pose dans ~/.claude/settings.json (permissions.deny, les trois outils mcp__mon-studio__…)
+qui en empêche les sessions ; la page, elle, appelle le connecteur par l'app, que cette règle ne touche pas. Seule une
+instance lancée avec CLAUDE_PROJECT_DIR posé limite `lire` et `ouvrir` d'un fichier au Studio de ce dossier et refuse
+`decider` et `repondre` ; les instances que l'app lance, celles que la page et les sessions de l'app appellent, ne
+portent pas cette variable : ce garde-fou-là ne s'y applique pas, la règle de refus est la protection.
 
 Les demandes arrivent par une socket Unix locale, une par instance de ce serveur :
 ~/Mon Studio/.parc/autorisations-<pid>.sock (dossier en 700, socket en 600), tenue par un fil. L'app de bureau lance
@@ -146,7 +152,9 @@ COPIE_MOTIF = (r'^(?:Q\d{1,4}(?: (?:go|oui|pas encore|ok|[1-9]\d?|' + RECOMMANDE
 OUTILS = [
     {'name': 'lignes',
      'description': "Le tableau de Mon Studio : une ligne par question ou action qui attend le PM, dans tous ses "
-                    "Studios et ses chantiers, plus la liste des tableaux de chantier et la liste par projet. Lecture seule, sans LLM.",
+                    "Studios et ses chantiers, plus la liste des tableaux de chantier et la liste par projet. Lecture seule, sans LLM. "
+                    "Rend aussitôt le dernier tableau calculé (`frais: false`, `genere` : son heure) et le recalcule en fond : "
+                    "rappeler quelques secondes plus tard pour le tableau frais (`frais: true`).",
      'inputSchema': {'type': 'object', 'properties': {}, 'additionalProperties': False},
      'annotations': {'title': 'Tableau de Mon Studio', 'readOnlyHint': True, 'openWorldHint': False}},
     {'name': 'projet',
@@ -166,12 +174,15 @@ OUTILS = [
                     "« id », ouvre ce document (md, pdf, docx, xlsx, image…) dans son application ; tout autre type est refusé. "
                     "Avec « ranger » (bouton « Ranger » de la page), copie la demande d'archivage des sessions finies, "
                     "écrite par le Mac, que le PM collera lui-même dans une session ; n'archive rien. "
+                    "Avec « slack » (l'adresse web d'un message, https://<espace>.slack.com/archives/…), ouvre ce message "
+                    "directement dans l'app Slack de bureau ; sans elle, dans le navigateur. "
                     "Ne modifie rien d'autre.",
      'inputSchema': {'type': 'object', 'properties': {'id': {'type': 'string', 'pattern': r'^local_[0-9a-f-]{36}$'},
                                                       'copier': {'type': 'string', 'pattern': COPIE_MOTIF},
                                                       'dossier': {'type': 'string', 'minLength': 1, 'maxLength': 1000},
                                                       'fichier': {'type': 'string', 'minLength': 1, 'maxLength': 500},
-                                                      'ranger': {'type': 'boolean'}},
+                                                      'ranger': {'type': 'boolean'},
+                                                      'slack': {'type': 'string', 'minLength': 1, 'maxLength': 500}},
                      'additionalProperties': False},
      'annotations': {'title': 'Ouvrir une session', 'readOnlyHint': False, 'destructiveHint': False, 'idempotentHint': True,
                      'openWorldHint': False}},
@@ -183,7 +194,7 @@ OUTILS = [
     {'name': 'decider',
      'description': "Autorise cette fois (allow) ou refuse (deny) une demande d'autorisation en attente, par son "
                     "identifiant : la session reçoit la réponse pour cet appel seulement, sans règle permanente. "
-                    "Réservé à la page : appelé sur un clic du PM, jamais par une session.",
+                    "Réservé à la page, sur un clic du PM : une règle de refus posée à l'installation en empêche les sessions.",
      'inputSchema': {'type': 'object', 'properties': {'id': {'type': 'string', 'pattern': r'^[0-9a-f]{32}$'},
                                                       'decision': {'type': 'string', 'enum': ['allow', 'deny']}},
                      'required': ['id', 'decision'], 'additionalProperties': False},
@@ -201,7 +212,7 @@ OUTILS = [
                     "« question » (Q11, ou vide pour une question sans numéro) : la session ne l'attend pas ; son tour fini, "
                     "elle reprend avec cette réponse ; en plein tour, la réponse lui est donnée dès la fin du tour "
                     "(24 h au plus). Rend « mode » : directe, reveil, file, ou copie (à copier dans la session). "
-                    "Aucun texte libre. Réservé à la page : appelé sur un clic du PM, jamais par une session.",
+                    "Aucun texte libre. Réservé à la page, sur un clic du PM : une règle de refus posée à l'installation en empêche les sessions.",
      'inputSchema': {'type': 'object', 'properties': {'id': {'type': 'string', 'pattern': r'^[0-9a-f]{32}$'},
                                                       'session': {'type': 'string', 'pattern': r'^local_[0-9a-f-]{36}$'},
                                                       'question': {'type': 'string', 'pattern': r'^(?:Q\d{1,4})?$'},
@@ -230,7 +241,7 @@ OUTILS = [
                     "(« Annuler ») une fermeture faite par la page il y a moins d'une minute. Avec « reclasser » (dabord, "
                     "ensuite, annuler), ne ferme rien : met la ligne dans « D'abord » ou hors de « D'abord » au tableau, "
                     "ou annule, quand l'interrupteur « reclassement » est allumé. Réservé "
-                    "à la page : appelé sur un clic du PM, jamais par une session.",
+                    "à la page, sur un clic du PM : une règle de refus posée à l'installation en empêche les sessions.",
      'inputSchema': {'type': 'object', 'properties': {'cle': {'type': 'string', 'minLength': 1, 'maxLength': 80},
                                                       'matin': {'type': 'boolean'}, 'plus_tard': {'type': 'boolean'},
                                                       'abandon': {'type': 'boolean'}, 'rouvrir': {'type': 'boolean'},
@@ -253,7 +264,7 @@ OUTILS = [
      'annotations': {'title': 'Écrire le point du matin', 'readOnlyHint': False, 'destructiveHint': False,
                      'idempotentHint': True, 'openWorldHint': False}},
     {'name': 'conflits_juger',
-     'description': "Inscrit au registre des conflits d'un Studio les jugements de sa passe du lundi : « plan » est le "
+     'description': "Inscrit au registre des conflits d'un Studio les jugements de sa passe du matin : « plan » est le "
                     "chemin donné par `matin.py preparer` (champ `conflits`), « jugements » la liste JSON, un objet par "
                     "sujet. Rien n'est marqué dans les documents. Réservé à la tâche planifiée du point du matin.",
      'inputSchema': {'type': 'object', 'properties': {'plan': {'type': 'string', 'minLength': 1, 'maxLength': 1000},
@@ -375,8 +386,148 @@ def noter(texte):
 
 
 def lignes():
-    with CALCUL:
-        return _lignes()
+    """The board computed now (the watcher, « retirer », « reclasser » and the tests need it fresh); kept as the last
+    reading, in memory and in ~/Mon Studio/.parc/lignes-derniere.json, for the page's next call (lignes_page)."""
+    return GARDE_LIGNES.calculer(None)
+
+
+# --- the board served at once (stale-while-revalidate, 2026-11-23) -----------------------------------------------------
+# A reading of the board took 4 to 8 s on the PM's Mac, and the page showed nothing until it came. The page's call
+# (lignes_page) now returns the last board at once, in memory or, after a restart of the app, from
+# lignes-derniere.json, with `frais: false`, and computes it again in a background thread; the page asks again
+# shortly and gets the fresh board (`frais: true`). One computation at a time (CALCUL): a call that comes while one
+# runs starts none. A click that changes the board (any tool but the read-only ones) makes the last board stale
+# for good: the next call computes it before answering, as before. Without a last board (first call ever), and when
+# the last background computation failed, the call computes before answering too, so that its error reaches the page.
+# 2026-11-24: the same mechanism (Garde) serves « projet », one kept view per Studio folder: an opening of a project
+# took 0.6 to 1.6 s, and waited for the board's background computation (CALCUL) besides.
+DERNIER = 'lignes-derniere.json'
+FRAIS_S = 5            # a reading computed less than that ago is fresh: the page's second call does not start another one
+LECTURE_SEULE = frozenset({'lignes', 'projet', 'autorisations', 'attentes', 'lire', 'gabarit', 'slack_ouvertes', 'ouvrir'})
+_mutations = {'n': 0}
+_ETAT = threading.Lock()
+# The board's state in GARDE_LIGNES (key None), plus `disque`: lignes-derniere.json was read once. `_fond` names the same
+# dict, for the reader looking for the background thread (`fil`).
+_dernier = {'resultat': None, 'generation': -1, 'fini': None, 'erreur': False, 'fil': None, 'disque': False}
+_fond = _dernier
+
+
+class Garde:
+    """The last result of a read, by key, served at once while it is computed again in the background.
+
+    servir(cle): a result computed less than FRAIS_S ago, and since the last tool that writes, comes back with
+    `frais: true`; an older one comes back at once with `frais: false`, and one background computation for that key
+    starts (none while one runs). Without a result, or after a tool that writes (_mutations), or after a background
+    computation that failed, the call computes before answering, as without this mechanism. `verrou` (CALCUL for the
+    board) is held around the whole computation; `apres` runs on each new result (the board is also kept on disk)."""
+
+    def __init__(self, nom, calcul, verrou=None, apres=None, libelle=None, etats=None, garder_max=64):
+        self.nom, self.calcul, self.verrou, self.apres = nom, calcul, verrou, apres
+        self.libelle = libelle or (lambda cle: '')
+        self.etats = etats if etats is not None else {}
+        self.garder_max = garder_max
+
+    def etat(self, cle):
+        """The state of one key (under _ETAT): its last result, the generation of the clicks it was computed after,
+        the end of its computation (time.monotonic), whether the last background computation failed, its thread."""
+        st = self.etats.get(cle)
+        if st is None:
+            if len(self.etats) >= self.garder_max:   # a bounded memory: the keys no thread computes, oldest first
+                for k in sorted((k for k, v in self.etats.items() if v['fil'] is None),
+                                key=lambda k: self.etats[k]['fini'] or 0)[:len(self.etats) - self.garder_max + 1]:
+                    del self.etats[k]
+            st = self.etats[cle] = {'resultat': None, 'generation': -1, 'fini': None, 'erreur': False, 'fil': None}
+        return st
+
+    def calculer(self, cle):
+        """The result computed now, kept as the last one of its key."""
+        with (self.verrou or _SANS_VERROU):
+            generation = _mutations['n']   # read before the inputs: a click during the computation makes it stale
+            r = self.calcul(cle)
+            with _ETAT:
+                self.etat(cle).update(resultat=r, generation=generation, fini=time.monotonic(), erreur=False)
+        if self.apres:
+            self.apres(r)
+        return r
+
+    def servir(self, cle):
+        with _ETAT:
+            st = self.etat(cle)
+            r, en_cours = st['resultat'], st['fil'] is not None
+            a_jour = r is not None and st['generation'] == _mutations['n'] and not st['erreur']
+            if a_jour and not en_cours and st['fini'] is not None and time.monotonic() - st['fini'] <= FRAIS_S:
+                return dict(r, frais=True)
+            if a_jour:
+                if not en_cours:
+                    st['fil'] = threading.Thread(target=self._en_fond, args=(cle,), name=f'{self.nom}-en-fond',
+                                                 daemon=True)
+                    st['fil'].start()
+                return dict(r, frais=False)
+        return dict(self.calculer(cle), frais=True)
+
+    def _en_fond(self, cle):
+        debut, libelle = time.monotonic(), self.libelle(cle)
+        libelle = f'{libelle} · ' if libelle else ''
+        try:
+            self.calculer(cle)
+            noter(f"{self.nom} en fond · {libelle}{time.monotonic() - debut:.2f} s")
+        except Exception as exc:   # the background never stops the server; the next call computes and shows the error
+            with _ETAT:
+                self.etat(cle)['erreur'] = True
+            noter(f"{self.nom} en fond · {libelle}échec : {exc!r}")
+        finally:
+            with _ETAT:
+                self.etat(cle)['fil'] = None
+
+
+class _SansVerrou:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+_SANS_VERROU = _SansVerrou()
+
+
+def garder_le_dernier(r):
+    """The last board on disk, for an instance that starts (the app restarted): never an error, the board comes first."""
+    try:
+        parc.ecrire_atomique(parc.INTERNE / DERNIER, json.dumps({'version': VERSION, 'plugin': version_installee(),
+                                                                'lignes': r}, ensure_ascii=False))
+    except (OSError, TypeError, ValueError) as exc:
+        noter(f"dernier tableau · échec : {exc!r}")
+
+
+def dernier_du_disque():
+    """The board an earlier instance kept, or None (absent, unreadable, or written by another version of the plugin:
+    the page's code, served by this one, may not read an older board)."""
+    d = parc.lire_json(parc.INTERNE / DERNIER, None)
+    if isinstance(d, dict) and d.get('version') == VERSION and d.get('plugin') == version_installee() \
+            and isinstance(d.get('lignes'), dict) \
+            and isinstance(d['lignes'].get('lignes'), list):
+        return d['lignes']
+    return None
+
+
+def noter_mutation(nom):
+    """After a tool that may change what the board shows: the readings kept so far are no longer served."""
+    if nom not in LECTURE_SEULE:
+        with _ETAT:
+            _mutations['n'] += 1
+
+
+def lignes_page():
+    """The page's « lignes »: the last board at once when there is one (`frais: false`, computed again in the
+    background), the board computed now otherwise (`frais: true`)."""
+    with _ETAT:
+        if _dernier['resultat'] is None and not _dernier['disque']:
+            _dernier['disque'] = True
+            r = dernier_du_disque()
+            if r is not None:   # this instance has seen no click yet: the kept board is as good as its own
+                _dernier.update(resultat=r, generation=0, fini=None)
+    return GARDE_LIGNES.servir(None)
 
 
 def _lignes():
@@ -385,9 +536,14 @@ def _lignes():
     cache = parc.charger_cache()
     e = parc.construire(int(parc.os.environ.get('MON_STUDIO_JOURS', 7)), 7, maintenant, cache)
     parc.ecrire_atomique(parc.INTERNE / 'cache.json', json.dumps(cache, ensure_ascii=False))
+    retenir_sessions(parc.fiches(cache))   # the cards just read: « attentes » and « autorisations » need not read them
     # La liste par projet : un échec de son calcul ne coûte que son bloc, le tableau reste.
     try:
-        projets = charger_projets().calculer(e=e, maintenant=maintenant, metas=parc.fiches(cache), depuis_connecteur=True)
+        mod = charger_projets()
+        # « Pour info » hides what the PM saw on a day before today: read the last such visit BEFORE noting this one.
+        vu_avant = mod.derniere_visite_avant_aujourdhui(maintenant)
+        projets = mod.calculer(e=e, maintenant=maintenant, metas=parc.fiches(cache), depuis_connecteur=True, vu_avant=vu_avant)
+        mod.noter_visite(maintenant)
     except Exception as exc:
         noter(f"projets · échec : {exc!r}")
         projets = None
@@ -640,14 +796,21 @@ def a_prevenir(l):
 
 
 def projet(arguments):
+    """The page's « projet »: the view of one Studio, served at once from the last one kept for that folder
+    (GARDE_PROJET, `frais: false`) and computed again in the background; computed now without one."""
     dossier = str((arguments or {}).get('dossier') or '')
     if not dossier or len(dossier) > 1000:
         raise ValueError('dossier de projet invalide')
-    charger_parc()
-    maintenant = time.time()
-    cache = parc.charger_cache()
-    e = parc.construire(int(parc.os.environ.get('MON_STUDIO_JOURS', 7)), 7, maintenant, cache)
-    parc.ecrire_atomique(parc.INTERNE / 'cache.json', json.dumps(cache, ensure_ascii=False))
+    return GARDE_PROJET.servir(dossier)
+
+
+def _projet(dossier):
+    with CALCUL:   # the background reading of the board computes with the same cache
+        charger_parc()
+        maintenant = time.time()
+        cache = parc.charger_cache()
+        e = parc.construire(int(parc.os.environ.get('MON_STUDIO_JOURS', 7)), 7, maintenant, cache)
+        parc.ecrire_atomique(parc.INTERNE / 'cache.json', json.dumps(cache, ensure_ascii=False))
     vue = parc.vue_projet_pour_la_page(e, dossier)
     # The « Conflits » tab: the open cases of the Studio's register, read-only. A failure costs only that tab.
     try:
@@ -697,6 +860,68 @@ def ouvrir_fichier(dossier, fichier):
     return {'ouvert': chemin}
 
 
+# A Slack message straight in the desktop app (PM, Q14, 2026-11-17). The web address goes through the browser and
+# Slack's go-between page; the slack:// link opens the app on the message, but it needs the workspace id (T…), which the
+# web address does not carry. The Slack app keeps it, by workspace domain, in its root-state.json (App Store version in
+# its container, the other one in Application Support); nothing is written there. Without the app or the workspace, the
+# web address opens in the browser, as before. A slack:// link put in the page itself left the pane blank (2026-11-17):
+# here `open` hands it to macOS, the page never navigates.
+LIEN_SLACK = re.compile(r'https://([a-z0-9-]+)\.slack\.com/archives/(C[A-Z0-9]{6,20}|G[A-Z0-9]{6,20}|D[A-Z0-9]{6,20})'
+                        r'/p(\d{10})(\d{6})(?:\?(.*))?')
+
+
+def etats_slack():
+    env = os.environ.get('MON_STUDIO_SLACK_ETAT')
+    if env:
+        return [pathlib.Path(env)]
+    base = pathlib.Path.home() / 'Library'
+    return [base / 'Containers' / 'com.tinyspeck.slackmacgap' / 'Data' / 'Library' / 'Application Support' / 'Slack'
+            / 'storage' / 'root-state.json',
+            base / 'Application Support' / 'Slack' / 'storage' / 'root-state.json']
+
+
+def espace_slack(domaine):
+    """The workspace id (T…) of a Slack domain, read in the desktop app's state, or None."""
+    for chemin in etats_slack():
+        try:
+            espaces = json.loads(chemin.read_text(encoding='utf-8')).get('workspaces') or {}
+        except (OSError, ValueError, AttributeError):
+            continue
+        for cle, w in espaces.items() if isinstance(espaces, dict) else ():
+            if isinstance(w, dict) and str(w.get('domain') or '').lower() == domaine:
+                tid = w.get('id') or cle
+                if isinstance(tid, str) and re.fullmatch(r'[TE][A-Z0-9]{6,20}', tid):
+                    return tid
+    return None
+
+
+def lien_app_slack(url):
+    """slack://channel?team=…&id=…&message=… for a Slack message address, or None (not a message, unknown workspace)."""
+    m = LIEN_SLACK.fullmatch(url or '')
+    if not m:
+        return None
+    domaine, canal, ts = m.group(1).lower(), m.group(2), m.group(3) + '.' + m.group(4)
+    equipe = espace_slack(domaine)
+    if not equipe:
+        return None
+    lien = f'slack://channel?team={equipe}&id={canal}&message={ts}'
+    fil = re.search(r'(?:^|&)thread_ts=(\d{10}\.\d{6})(?:&|$)', m.group(5) or '')
+    if fil and fil.group(1) != ts:
+        lien += '&thread_ts=' + fil.group(1)
+    return lien
+
+
+def ouvrir_slack(url):
+    if not isinstance(url, str) or not LIEN_SLACK.fullmatch(url):
+        raise ValueError("adresse d'un message Slack attendue (https://<espace>.slack.com/archives/…)")
+    app = lien_app_slack(url)
+    if app and subprocess.run(['open', app], capture_output=True).returncode == 0:
+        return {'ouvert': 'app'}
+    if subprocess.run(['open', url], capture_output=True).returncode != 0:
+        raise RuntimeError("le message Slack n'a pas pu s'ouvrir")
+    return {'ouvert': 'navigateur'}
+
+
 def dossier_de_la_session():
     """CLAUDE_PROJECT_DIR when this instance was launched with it, or None. The guard built on it applies only when the
     variable is present: the instances the desktop app launches (the ones the page and the app's sessions call) never
@@ -724,6 +949,8 @@ def lire(arguments):
 
 def ouvrir(arguments):
     arguments = arguments or {}
+    if 'slack' in arguments:
+        return ouvrir_slack(arguments.get('slack'))
     if 'fichier' in arguments or 'dossier' in arguments:
         session = dossier_de_la_session()
         if session and charger_projets().dossier_normal(str(arguments.get('dossier') or '')) != charger_projets().dossier_normal(session):
@@ -1035,7 +1262,7 @@ class Autorisations:
 
 
 AUTORISATIONS = Autorisations()
-_fiches = {'fiches': {}}
+_fiches = {'fiches': None}   # the connector's own reading of the app's cards (sessions_connues)
 
 
 def interrupteur():
@@ -1047,10 +1274,66 @@ def interrupteur_reponses():
     etat = parc.lire_json(parc.INTERNE / 'cockpit.json', {}) or {}
     return isinstance(etat, dict) and etat.get('reponses_directes') is True
 
-def sessions_connues():
-    """{identifiant CLI: (local_…, titre)} d'après les fiches de l'app, relues seulement quand elles bougent."""
-    charger_parc()
-    return {m['cli']: (m['id'], m['titre']) for m in parc.fiches(_fiches) if m.get('cli')}
+# The sessions « attentes » and « autorisations » name, read without waiting (2026-11-24). A card of the app weighs
+# about 1 MB on the PM's Mac (1 045 cards, 700 MB): the first « attentes » after a start of the app parsed them all
+# (11.89 s on 2026-11-24 at 08:36), and each later call still made a system call per card, each one paid up to 5 ms
+# while the board's background computation held the GIL. Now the connector's reading of the cards starts from the
+# board's own (cache.json: only the cards changed since are parsed), the map is kept, and each board computation, in
+# the background, hands it a fresh one. A page's call reads the cards again only for a session it does not know yet
+# (once per MANQUE_S for one that has no card), or when the map is older than SESSIONS_S.
+SESSIONS_S = 60
+MANQUE_S = 15
+_connues = {'t': None, 'carte': None, 'manques': {}, 'index_t': None, 'index': None, 'index_manques': {}}
+_CONNUES = threading.Lock()
+
+
+def carte_des_sessions(metas):
+    return {m['cli']: (m['id'], m['titre']) for m in metas if m.get('cli')}
+
+
+def retenir_sessions(metas):
+    """The map the board's computation read (in the background), for the next page's call."""
+    carte = carte_des_sessions(metas)
+    with _CONNUES:
+        _connues.update(t=time.monotonic(), carte=carte)
+
+
+def _a_relire(t, connus, besoin, manques, maintenant):
+    if connus is None or t is None or maintenant - t > SESSIONS_S:
+        return True
+    return any(b not in connus and maintenant - manques.get(b, -MANQUE_S - 1) > MANQUE_S for b in besoin if b)
+
+
+def sessions_connues(besoin=()):
+    """{identifiant CLI: (local_…, titre)} d'après les fiches de l'app ; relues seulement pour une session de `besoin`
+    pas encore connue, ou quand la carte a plus de SESSIONS_S, et alors seulement les fiches qui ont bougé."""
+    with _CONNUES:
+        maintenant = time.monotonic()
+        if not _a_relire(_connues['t'], _connues['carte'], besoin, _connues['manques'], maintenant):
+            return _connues['carte']
+        charger_parc()
+        if _fiches['fiches'] is None:   # first reading of this instance: the board's, as kept on disk
+            _fiches['fiches'] = dict(parc.charger_cache().get('fiches') or {})
+        carte = carte_des_sessions(parc.fiches(_fiches))
+        _connues.update(t=time.monotonic(), carte=carte)
+        for b in besoin:
+            if b and b not in carte:
+                _connues['manques'][b] = maintenant
+        return carte
+
+
+def transcripts_connus(besoin=()):
+    """{CLI id: transcript} (parc.index_transcripts), kept like sessions_connues: listed again only for a session not
+    known yet (once per MANQUE_S), or after SESSIONS_S."""
+    with _CONNUES:
+        maintenant = time.monotonic()
+        if _a_relire(_connues['index_t'], _connues['index'], besoin, _connues['index_manques'], maintenant):
+            index = parc.index_transcripts()
+            _connues.update(index_t=time.monotonic(), index=index)
+            for b in besoin:
+                if b and b not in index:
+                    _connues['index_manques'][b] = maintenant
+        return _connues['index']
 
 
 def repondue_ailleurs(dem, index):
@@ -1089,7 +1372,8 @@ def autorisations():
     if actif:
         attente = AUTORISATIONS.en_attente()
         if attente:
-            connues, index = sessions_connues(), parc.index_transcripts()
+            besoin = [d.session for d in attente]
+            connues, index = sessions_connues(besoin), transcripts_connus(besoin)
             for d in attente:
                 if repondue_ailleurs(d, index):
                     AUTORISATIONS.lacher(d)
@@ -1108,7 +1392,7 @@ def decider(arguments):
     if not interrupteur():
         raise ValueError("les autorisations depuis Mon Studio sont coupées (cockpit.json, autorisations_tableau)")
     dem = AUTORISATIONS.decider(arguments.get('id') or '', arguments.get('decision'))
-    titre = sessions_connues().get(dem.session, (None, None))[1]
+    titre = sessions_connues([dem.session]).get(dem.session, (None, None))[1]
     ligne = {'date': dt.datetime.now().astimezone().isoformat(timespec='seconds'), 'decision': dem.reponse,
              'outil': dem.outil, 'extrait': dem.extrait, 'session': dem.session, 'titre': titre}
     try:
@@ -1131,7 +1415,7 @@ def attentes():
     sortie = []
     if actif:
         liste = AUTORISATIONS.en_attente_de_reponse()
-        connues = sessions_connues() if liste else {}
+        connues = sessions_connues([a.session for a in liste]) if liste else {}
         for a in liste:
             sid, titre = connues.get(a.session, (None, None))
             sortie.append({'id': a.id, 'session': a.session, 'sessionId': a.sessionId or sid, 'titre_session': titre,
@@ -1149,7 +1433,7 @@ def repondre_attente(arguments):
     if not interrupteur_reponses():
         raise ValueError("les réponses depuis Mon Studio sont coupées (cockpit.json, reponses_directes)")
     att = AUTORISATIONS.repondre(arguments.get('id') or '', arguments.get('choix'))
-    titre = sessions_connues().get(att.session, (None, None))[1]
+    titre = sessions_connues([att.session]).get(att.session, (None, None))[1]
     ligne = {'date': dt.datetime.now().astimezone().isoformat(timespec='seconds'), 'numero': att.numero,
              'choix': att.reponse, 'session': titre or att.sessionId or att.session}
     try:
@@ -1236,6 +1520,10 @@ MODES = {'plan': 'plan', 'default': 'default', 'manual': 'default', 'dontAsk': '
 DECONNECTE = re.compile(r'^(?:Not logged in|OAuth session expired|OAuth token has expired|Invalid API key|Please run /login)',
                         re.I | re.M)
 CALCUL = threading.RLock()  # one board computation at a time: the page's call and the watcher's use the same cache
+GARDE_LIGNES = Garde('lignes', lambda cle: _lignes(), verrou=CALCUL, apres=garder_le_dernier, etats={None: _dernier},
+                     garder_max=1)
+GARDE_PROJET = Garde('projet', lambda dossier: _projet(dossier),
+                     libelle=lambda dossier: (dossier.rstrip('/').rsplit('/', 1)[-1] or dossier)[:60])
 _lignes_vues = {'t': 0.0, 'lignes': []}
 _retirables = {'t': 0.0, 'lignes': {}}
 _reclassables = {'t': 0.0, 'lignes': {}}   # the lines « Pas si urgent » / « À faire d'abord » may move, by their key
@@ -1602,7 +1890,7 @@ def attente_pour(sid, question):
             continue
         s = a.sessionId
         if not s:
-            connues = sessions_connues() if connues is None else connues
+            connues = sessions_connues([a.session]) if connues is None else connues
             s = connues.get(a.session, (None, None))[0]
         if s == sid and not a.fini.is_set():
             return a
@@ -1835,7 +2123,7 @@ def traiter(msg):
         nom, debut = params.get('name'), time.time()
         try:
             if nom == 'lignes':
-                donnees = lignes()
+                donnees = lignes_page()
             elif nom == 'ouvrir':
                 donnees = ouvrir(params.get('arguments'))
             elif nom == 'projet':
@@ -1873,6 +2161,8 @@ def traiter(msg):
         except Exception as exc:  # l'outil répond en échec, le serveur reste debout
             noter(f"{nom} · échec : {exc!r}")
             repondre(msg_id, {'content': [{'type': 'text', 'text': str(exc)}], 'isError': True})
+        finally:
+            noter_mutation(nom)   # même en échec : un outil qui écrit a pu écrire avant de lever
     else:
         repondre(msg_id, erreur={'code': -32601, 'message': f'méthode inconnue : {methode}'})
 

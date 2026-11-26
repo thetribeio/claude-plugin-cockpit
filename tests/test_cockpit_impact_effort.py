@@ -13,6 +13,7 @@ words (« (impact fort : client attend) », « (effort court) »), and plain rul
    « Peut attendre », folded; a strong line says why.
 People, Studios and texts are made up."""
 import _isolation  # noqa: F401 (HOME and env point to a temp folder)
+import datetime as dt
 import importlib.util
 import json
 import os
@@ -73,7 +74,9 @@ class Rules(unittest.TestCase):
     def test_due_dates(self):
         self.assertEqual(self.p('Envoyer le devis', echeance=NOW - 3 * DAY)['raison'], 'en retard')
         self.assertEqual(self.p('Envoyer le devis', echeance=NOW - 3 * DAY)['impact'], 'fort')
-        self.assertEqual(self.p('Envoyer le devis', echeance=NOW + DAY, proche=True), {'impact': 'fort', 'raison': '', 'effort': ''})
+        dans_un_jour = dt.date.fromtimestamp(NOW + DAY).strftime('%d/%m')
+        self.assertEqual(self.p('Envoyer le devis', echeance=NOW + DAY, proche=True),
+                         {'impact': 'fort', 'raison': f'échéance {dans_un_jour}', 'effort': ''})
         self.assertEqual(self.p('Envoyer le devis', echeance=NOW + 20 * DAY)['impact'], 'normal')
 
     def test_a_session_that_waits_or_stopped(self):
@@ -215,14 +218,17 @@ class Page(unittest.TestCase):
                                      recente=il_y_a(300), urgence=2),
                                ligne('Question du Studio B', studio='Beta', depuis=il_y_a(7200), recente=il_y_a(7200),
                                      urgence=2),
-                               ligne('Production arrêtée', impact='fort', raison='bloqué'),
-                               ligne('Go attendu', impact='fort', raison='client attend', effort='court'),
+                               ligne('Production arrêtée', impact='fort', raison='bloqué', depuis=il_y_a(86400), recente=il_y_a(86400)),
+                               ligne('Go attendu', impact='fort', raison='client attend', effort='court', depuis=il_y_a(7200),
+                                     recente=il_y_a(7200)),
                                ligne('Archiver cette session', impact='faible', raison='rangement')],
                        liste_projets={'projets': [{'nom': 'Alpha', 'dossier': '/x/alpha', 'lignes': [
                            demande('Ana demande un accès', impact='fort', raison='Ana attend'),
                            demande('Caler le point', cle='b' * 12)]}], 'studios': ['Alpha']})
         t = out['tableau']
-        self.order(t, "D'abord", 'Go attendu', 'Ana demande un accès', 'Production arrêtée', 'Ensuite', 'Question du dépôt',
+        # « D'abord » (PM, Q6, 2026-11-25): the other strong lines, the most recent first: the request of 1 h, the go of 2 h, the
+        # production of a day.
+        self.order(t, "D'abord", 'Ana demande un accès', 'Go attendu', 'Production arrêtée', 'Ensuite', 'Question du dépôt',
                    'Caler le point', 'Question ordinaire', 'Question du Studio B')
         self.assertIn('D\'abord <span class="n">· 3</span>', t)
         self.assertIn('Ensuite <span class="n">· 4</span>', t)

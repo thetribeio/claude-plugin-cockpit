@@ -79,7 +79,9 @@ class Base(unittest.TestCase):
                               env=self.env(wait, **env), timeout=60)
 
     def files(self):
-        return sorted(str(p.relative_to(self.mon_studio)) for p in self.mon_studio.rglob('*'))
+        # The trace of each request (time and tool, tests/test_cockpit_long_tool.py) is the only file the hook writes.
+        return sorted(str(p.relative_to(self.mon_studio)) for p in self.mon_studio.rglob('*')
+                      if 'demandes-autorisation' not in p.parts)
 
 
 class FakeConnector:

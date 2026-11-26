@@ -468,18 +468,19 @@ def preparer(maintenant=None):
     sortie = {'aujourdhui': _aujourdhui(maintenant), 'maintenant': _maintenant(maintenant), 'studios': studios,
               'deja_releve': releve, 'comptes_rendus': comptes_rendus,
               'brouillons': brouillons_a_verifier(studios, maintenant)}
-    conflits = passes_de_la_semaine(studios, maintenant)
+    conflits = passes_du_jour(studios, maintenant)
     if conflits:
         sortie.update(conflits=conflits, conflits_consigne=CONSIGNE_CONFLITS + _charger_conflits().CONSIGNE_JUGEMENT)
     return sortie
 
 
-# --- La passe des conflits du lundi (PM, Q18, 2026-11-15) ----------------------------------------------------
-# Aucune tâche planifiée par Studio : le premier point du matin de la semaine (le lundi, ou le jour ouvré suivant si
-# le lundi n'a pas tourné) ouvre la passe de chaque Studio où la personne est PM, déjà vérifié une fois (« Dernier
-# passage » au registre) et sans ingestion automatique active (elle inscrit ses cas elle-même). `preparer` rend leurs
-# sujets ; la tâche les juge et les rend par l'outil `conflits_juger` du connecteur. Rien n'est marqué dans les
-# documents : les décisions vont au registre, les marquages sûrs attendent le go du PM dans la session des conflits.
+# --- La passe des conflits de chaque matin (PM, Q18 du 2026-11-15, Q16 du 2026-11-23) --------------------------
+# Aucune tâche planifiée par Studio : le premier point du matin de chaque jour ouvre la passe de chaque Studio où la
+# personne est PM, déjà vérifié une fois (« Dernier passage » au registre), ingestion automatique active ou non : la
+# détection après ingestion n'a rien inscrit en douze jours (23/11), la passe ne compte plus sur elle. Elle ne relit que
+# les lignes que le dernier passage complet n'a pas lues, réunions et mails compris. `preparer` rend leurs sujets ; la
+# tâche les juge et les rend par l'outil `conflits_juger` du connecteur. Rien n'est marqué dans les documents : les
+# décisions vont au registre, sans question ; les marquages sûrs attendent le go du PM dans la session des conflits.
 
 # The Monday gestures, given with the subjects only when there are some: the daily prompt stays short.
 CONSIGNE_CONFLITS = (
@@ -506,17 +507,16 @@ def _charger_conflits():
     raise FileNotFoundError('conflits.py')
 
 
-def passes_de_la_semaine(studios, maintenant):
-    """[{studio, plan, sujets, texte}] : les passes à juger aujourd'hui, une fois par semaine ; [] sinon. Une passe qui
-    dépasse ce qui reste du plafond (conflits.PASSE_MATIN_CARACTERES) attend : le lundi suivant relit depuis le même
+def passes_du_jour(studios, maintenant):
+    """[{studio, plan, sujets, texte}] : les passes à juger aujourd'hui, une fois par jour ; [] sinon. Une passe qui
+    dépasse ce qui reste du plafond (conflits.PASSE_MATIN_CARACTERES) attend : le matin suivant relit depuis le même
     « Dernier passage ». Un échec n'arrête jamais le point du matin."""
-    an, semaine, _ = dt.date.fromtimestamp(maintenant).isocalendar()
-    cle = f'{an}-S{semaine:02d}'
+    cle = _aujourdhui(maintenant)
     etat = parc.lire_json(_semaine_chemin(), {})
-    if isinstance(etat, dict) and etat.get('semaine') == cle:
+    if isinstance(etat, dict) and etat.get('jour') == cle:
         return []
     try:
-        parc.ecrire_atomique(_semaine_chemin(), json.dumps({'semaine': cle, 'le': _maintenant(maintenant)}))
+        parc.ecrire_atomique(_semaine_chemin(), json.dumps({'jour': cle, 'le': _maintenant(maintenant)}))
         c = _charger_conflits()
     except Exception:
         return []
@@ -531,9 +531,6 @@ def passes_de_la_semaine(studios, maintenant):
                 continue
             if not c.registre.lire_fichier(c.registre.chemin_du_studio(s['dossier']))['dernier_passage']:
                 continue                       # never checked: the first check has its own line and its own words
-            if c.ingestion_active(s['dossier'], maintenant):
-                faits[s['dossier']] = {'etat': 'ingestion'}
-                continue
             x = c.passe_du_matin(s['dossier'], reste)
         except Exception:
             faits[s['dossier']] = {'etat': 'erreur'}
@@ -545,7 +542,7 @@ def passes_de_la_semaine(studios, maintenant):
         else:
             faits[s['dossier']] = {'etat': 'trop', 'sujets': x['sujets']} if x else {'etat': 'rien'}
     try:
-        parc.ecrire_atomique(_semaine_chemin(), json.dumps({'semaine': cle, 'le': _maintenant(maintenant), 'studios': faits},
+        parc.ecrire_atomique(_semaine_chemin(), json.dumps({'jour': cle, 'le': _maintenant(maintenant), 'studios': faits},
                                                            ensure_ascii=False))
     except Exception:
         pass

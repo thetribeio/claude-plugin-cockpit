@@ -6,6 +6,8 @@
     conflits.py releve    <studio> [--dossier D] [--incremental] [--sortie PLAN.json]
                                                                           candidates and short extracts -> plan
     conflits.py lot       <plan> <k> [--sortie F]                         the extracts of batch k, for one sub-agent
+    conflits.py juger-lots <plan> [--paralleles N]                        every batch judged by a headless Sonnet call
+                                                                          (claude -p, no tool), then `juger`
     conflits.py juger     <plan> <jugements.json>...                      merges the sub-agents' judgments, prints the preview
     conflits.py apercu    <plan>                                          the preview table again
     conflits.py ecrire    <plan> --pm NOM [--decisions-seules]            after the go: safe markings, additions,
@@ -32,6 +34,7 @@ Code, names and messages to the session are in English or French as the reposito
 import argparse
 import datetime as dt
 import glob
+import hashlib
 import importlib.util
 import json
 import math
@@ -135,6 +138,16 @@ SESSION_APPELS_PAR_LOT = 3    # launch a sub-agent, receive its hand-back, a che
 SESSION_ECRITS_PAR_LOT = 11500
 SESSION_CROISSANCE_PAR_LOT = 5000   # the context grows with each batch received
 SESSION_SORTIE_FIXE, SESSION_SORTIE_PAR_LOT = 3000, 3250
+# The batches judged by the script (`juger-lots`, the default when `claude` is on the PATH), measured on a copy of a
+# real Studio (2026-11-23, 64 subjects, 7 batches of 15 to 43 KB, one headless Sonnet call each, two asked again for
+# refused or missing subjects): 138,044 input tokens (no cache), 22,940 output: 0.51 $ in 1 min 42 s, against 1.76 $
+# announced for the in-session sub-agents. Each call carries about 3,000 tokens besides its batch (the brief as the
+# system prompt, under 1,000 of Claude Code's own); a batch's text is 2.15 characters a token, 2.27 on the estimate's
+# count. The session (Opus) makes its fixed calls only: one launches `juger-lots` in the background, one reads its end.
+TETE_SOCLE = 3000             # a headless call's tokens besides its batch
+CARACTERES_PAR_TOKEN_TETE = 2.27
+TETE_REPRISES = 1.10          # the subjects asked again (2 of 7 batches, +7 % of the cost, measured)
+SESSION_ECRITS_TETE = 15000   # what `juger-lots` hands back to the session: its line and the preview table
 PART_PM = 0.20                # fraction of subjects that become PM decisions (2026-11-10 replay: 34 of 171 on a real Studio)
 TOKENS_PAR_DECISION = 900     # a prepared form, its answer, its discussion material
 MARGE = 1.15                  # rounded up a little: the replay of 2026-11-18 gives +16 %, within 25 % of the measure
@@ -471,20 +484,89 @@ def documents_vivants(studio, dossier=None):
     return sortie
 
 
-def sources_recentes(studio, depuis_ts):
-    """Dated sources (a file whose name starts with a date, or under a source folder) changed since `depuis_ts`."""
+def sources_du_studio(studio):
+    """{rel: size} of every dated source (a file whose name starts with a date, or under a source folder)."""
     racine = pathlib.Path(studio)
-    sortie = []
+    sortie = {}
     for chemin, sous, fichiers in os.walk(racine):
         sous[:] = sorted(d for d in sous if not d.startswith('.'))
         dans_sources = any(norm(p) in DOSSIERS_SOURCES for p in pathlib.Path(chemin).relative_to(racine).parts)
         for f in sorted(fichiers):
-            if not f.lower().endswith(('.md', '.txt')):
-                continue
-            p = os.path.join(chemin, f)
-            if (DATEE.match(f) or dans_sources) and os.path.getmtime(p) >= depuis_ts:
-                sortie.append(os.path.relpath(p, racine))
+            if f.lower().endswith(('.md', '.txt')) and (DATEE.match(f) or dans_sources):
+                p = os.path.join(chemin, f)
+                try:
+                    sortie[os.path.relpath(p, racine)] = os.path.getsize(p)
+                except OSError:
+                    continue
     return sortie
+
+
+# A source line meets an entry on its substance: four words in common, never a header line (« **Présents :** … »,
+# « **Source :** … ») nor a person's name (2026-11-23: three words, names included, gave 24 « revirements » for one day
+# of one Studio, most of them a list of attendees or a summary line).
+REVIREMENT_MOTS = 4
+PUCE = re.compile(r'^\s*(?:[-*+>]|\d+[.)])\s+')
+EN_TETE = re.compile(r'(?i)^[*_]*\s*(?:présents?|absents?|participants?|invités?|sources?|date|durée|lieu|résumé|'
+                     r'ordre du jour|animateur|rédacteur|destinataires?|de|à|cc|objet|from|to|subject)\s*[*_]*\s*:')
+NOM_PROPRE = re.compile(r'(?<![.!?:]\s)(?<!^)\b[A-ZÀ-Ý][a-zà-ÿ]+')
+
+
+def mots_de_fond(ligne):
+    t = PUCE.sub('', ligne.strip())
+    if EN_TETE.match(t):
+        return set()
+    noms = {norm(n) for n in NOM_PROPRE.findall(t)}
+    return mots(t) - noms
+
+
+# ---------- what the last complete pass read (2026-11-23)
+# The re-read starts from what the last complete pass read, line by line, never from a file's modification date: the
+# Drive rewrites the dates of whole folders (one real Studio, 23/11: 1,037 of 1,175 documents « changed » since the
+# 09/11 pass, 500 of them on 19/11), and the « incremental » re-read read the whole Studio again. `lignes-lues.json`, next to the
+# register: a 10-hex fingerprint of every line read, and the size of every source; written only with « Dernier
+# passage ». Without it (a Studio checked before this file existed), the dates written in the Studio decide: an entry
+# dated since « Dernier passage », a source whose name starts with such a date.
+LONGUEUR_EMPREINTE = 10
+
+
+def empreinte(ligne):
+    t = ' '.join((ligne or '').split()).lower()
+    return hashlib.sha1(t.encode('utf-8')).hexdigest()[:LONGUEUR_EMPREINTE] if t else None
+
+
+def chemin_lignes_lues(studio):
+    return chemin_conflits(studio) / 'lignes-lues.json'
+
+
+def lire_lignes_lues(studio):
+    """{'lignes': set of fingerprints, 'sources': {rel: size}, 'le'} or None when the Studio has none."""
+    x = registre._lire_json(chemin_lignes_lues(studio))
+    if not isinstance(x, dict) or not isinstance(x.get('lignes'), str) or not isinstance(x.get('sources'), dict):
+        return None
+    s, n = x['lignes'], LONGUEUR_EMPREINTE
+    return {'lignes': {s[k:k + n] for k in range(0, len(s), n)}, 'sources': x['sources'], 'le': x.get('le')}
+
+
+def ecrire_lignes_lues(plan):
+    """After a complete pass: what it read, added to what the passes before it read. False when the plan carries
+    nothing or the file could not be written (the Drive refused): « Dernier passage » then stays where it was."""
+    lu = plan.get('lu')
+    if not isinstance(lu, dict):
+        return False
+    avant = lire_lignes_lues(plan['studio']) or {'lignes': set(), 'sources': {}}
+    n = LONGUEUR_EMPREINTE
+    lignes = avant['lignes'] | {lu['lignes'][k:k + n] for k in range(0, len(lu['lignes']) - n + 1, n)}
+    try:
+        _ecrire_lignes_lues(plan, avant, lignes, lu)
+    except OSError:
+        return False
+    return True
+
+
+def _ecrire_lignes_lues(plan, avant, lignes, lu):
+    ecrire_texte(chemin_lignes_lues(plan['studio']), json.dumps(
+        {'version': 1, 'le': plan['date'], 'lignes': ''.join(sorted(lignes)), 'sources': {**avant['sources'], **lu['sources']}},
+        ensure_ascii=False))
 
 
 # ---------- the candidates
@@ -749,7 +831,6 @@ def releve(studio, dossier=None, incremental=False):
     studio = str(pathlib.Path(studio).resolve())
     reg = registre.lire_fichier(registre.chemin_du_studio(studio))
     depuis = registre.iso(reg['dernier_passage']) if incremental else None
-    depuis_ts = dt.datetime.fromisoformat(depuis).timestamp() if depuis else 0
     neuf = lambda d: not depuis or (d or '') >= depuis
     lire = lambda rel: entrees(lire_texte(pathlib.Path(studio) / rel) or '', rel)
     magasins = magasins_du_studio(studio)
@@ -775,8 +856,43 @@ def releve(studio, dossier=None, incremental=False):
             if md in sous_bandeau:
                 jumeaux[rel] = md
     docs = [d for d in docs if d not in sous_bandeau and d not in jumeaux]
-    docs_neufs = {d for d in docs if os.path.getmtime(pathlib.Path(studio) / d) >= depuis_ts} if depuis else set(docs)
     index = Lignes(studio, docs)
+    # What is new since the last complete pass: a line it did not read (`lignes-lues.json`), else, for a Studio checked
+    # before that file, an entry dated since « Dernier passage ». Never a file's modification date.
+    lues = lire_lignes_lues(studio) if depuis else None
+    sources = sources_du_studio(studio) if not dossier else {}
+    sources_lues = {}
+
+    def lire_source(rel, taille):
+        """A source's lines, kept as read with its size (the next pass reads it again only if its size changed)."""
+        lignes = (lire_texte(pathlib.Path(studio) / rel) or '').splitlines()
+        lu.update(empreinte(l) for l in lignes)
+        sources_lues[rel] = taille
+        return lignes
+    deja_lues = lues['lignes'] if lues else set()
+    lu = set()
+
+    def ligne_neuve(brute):
+        h = empreinte(brute)
+        return lues is not None and h is not None and h not in deja_lues
+
+    def lignes_de(e):
+        ls = index.textes.get(e['fichier'])
+        if ls is None:
+            ls = (lire_texte(pathlib.Path(studio) / e['fichier']) or '').splitlines()
+        return ls[e['ligne'] - 1:e['fin']]
+
+    neuves_memo = {}
+
+    def entree_neuve(e):
+        if not depuis:
+            return True
+        if id(e) not in neuves_memo:
+            if lues is not None:
+                neuves_memo[id(e)] = any(ligne_neuve(l) for l in lignes_de(e))
+            else:
+                neuves_memo[id(e)] = neuf(e.get('date')) or any(neuf(m.get('date')) for m in e.get('majs') or [])
+        return neuves_memo[id(e)]
     titres = {e['code']: une_ligne(e['libelle'], 80) for e in tout if e.get('code')}
     par_code = {e['code']: e for e in tout if e.get('code')}
     # The lines of a replaced entry, or of a closed question, are an archive: its old value is meant to be there.
@@ -798,7 +914,16 @@ def releve(studio, dossier=None, incremental=False):
         if (ancien.get('source'), jj(ancien.get('date')), nouveau.get('source'), jj(nouveau.get('date'))) in au_registre \
                 or (ancien.get('source'), ancien.get('date'), nouveau.get('source'), nouveau.get('date')) in au_registre:
             return
-        extraits = [extrait(rel, i, brute, ls) for rel, i, brute, ls in trouves]
+        extraits, memes = [], set()
+        for rel, i, brute, ls in trouves:
+            # The same passage copied in several files (a ticket exported to five folders) is read once (2026-11-23:
+            # one ticket in five export folders, five extracts of one line). An html page stays apart: its own subject.
+            cle = (empreinte(brute), est_html(rel))
+            if cle in memes:
+                vus.add((rel, i))
+                continue
+            memes.add(cle)
+            extraits.append(extrait(rel, i, brute, ls))
         if not extraits:
             return
         sid = f'S{len(sujets) + 1}'
@@ -808,25 +933,26 @@ def releve(studio, dossier=None, incremental=False):
         sujets.append({'id': sid, 'genre': genre, 'titre': une_ligne(titre, 90), 'ancien': ancien, 'nouveau': nouveau,
                        'extraits': extraits, 'client': any(x['client'] for x in extraits)})
 
-    def a_garder(trouves, date_nouvelle):
-        if not depuis:
+    def a_garder(trouves, nouvelle_neuve):
+        """A subject is new when its new value is, or when one of its passages is a line the last pass did not read."""
+        if not depuis or nouvelle_neuve:
             return trouves
-        return trouves if neuf(date_nouvelle) else [t for t in trouves if t[0] in docs_neufs]
+        return [t for t in trouves if ligne_neuve(t[2])]
 
     def propres(e):
         return {(e['fichier'], k - 1) for k in range(e['ligne'], e['fin'] + 1)}
 
-    def chercher_et_ajouter(e, genre, ancien, nv, ancien_texte, codes):
+    def chercher_et_ajouter(e, genre, ancien, nv, ancien_texte, codes, nouvelle_neuve):
         termes = termes_distinctifs(ancien_texte, nv['texte'])
         sujet_mots = mots(e['libelle']) | (mots(ancien_texte) & mots(nv['texte'])) or mots(ancien_texte)
         trouves = index.chercher(termes, sujet_mots, codes, propres(e) | archives, n=EXTRAITS_SUJET)
-        trouves = a_garder(trouves, registre.iso(nv['date']) if nv.get('date') else None)
+        trouves = a_garder(trouves, nouvelle_neuve)
         ajouter(genre, ancien, nv, trouves, e['libelle'])
 
     # (a) an entry replaced (status, strike-through, « Remplacée le … par … ») and (b) an entry an update changed:
     # the old value, its code and its distinctive words in the documents.
     for e in tout:
-        store = e['fichier']
+        store, nouvelle = e['fichier'], None
         if e['etat'] == 'remplace':
             nouvelle = remplacante(e['remplace_par'] or ' '.join(m['texte'] for m in e['majs']),
                                    [x for x in tout if x is not e])
@@ -859,7 +985,12 @@ def releve(studio, dossier=None, incremental=False):
         else:
             continue
         ancien_texte = e['texte'] + ' ' + e['libelle']
-        chercher_et_ajouter(e, genre, valeur(e, studio, store), nv, ancien_texte, [e['code']] if e.get('code') else [])
+        if lues is not None:
+            nouvelle_neuve = entree_neuve(e) or (nouvelle is not None and entree_neuve(nouvelle))
+        else:
+            nouvelle_neuve = neuf(registre.iso(nv['date']) if nv.get('date') else None)
+        chercher_et_ajouter(e, genre, valeur(e, studio, store), nv, ancien_texte, [e['code']] if e.get('code') else [],
+                            nouvelle_neuve)
 
     # (a') an active entry that says what it replaces without that being an entry (« Remplace : les valeurs de la V1 »).
     for e in tout:
@@ -869,7 +1000,7 @@ def releve(studio, dossier=None, incremental=False):
         ancien = {'texte': une_ligne(quoi, 400), 'source': e['fichier'], 'date': None, 'code': None,
                   'libelle': une_ligne(quoi, 60), 'entree': ''}
         codes = [c for c in CODE_STUDIO.findall(quoi) if c in par_code]
-        chercher_et_ajouter(e, 'remplace', ancien, valeur(e, studio, e['fichier']), quoi, codes)
+        chercher_et_ajouter(e, 'remplace', ancien, valeur(e, studio, e['fichier']), quoi, codes, entree_neuve(e))
 
     if True:  # noqa
         # (c) a line still waiting (« à valider », « non tranché », « - [ ] », « ? ») on a subject a decision, an update
@@ -904,7 +1035,7 @@ def releve(studio, dossier=None, incremental=False):
             nv = {'texte': (maj or {}).get('texte') or e['texte'], 'source': e['fichier'],
                   'date': iso_vers_jj((maj or {}).get('date') or e['date']), 'code': e.get('code'),
                   'libelle': e['libelle'], 'entree': une_ligne(e['brute'])}
-            trouves = a_garder(trouves, (maj or {}).get('date') or e['date'])
+            trouves = a_garder(trouves, entree_neuve(e) if lues is not None else neuf((maj or {}).get('date') or e['date']))
             ajouter('attente', {'texte': 'en attente, à décider', 'source': trouves[0][0] if trouves else e['fichier'],
                                 'date': None, 'code': None, 'libelle': 'Passage encore en attente', 'entree': ''},
                     nv, trouves, e['libelle'])
@@ -921,7 +1052,7 @@ def releve(studio, dossier=None, incremental=False):
             for d in actives:
                 if q.get('date') and d.get('date') and d['date'] < q['date']:
                     continue
-                if not neuf(d.get('date')):
+                if not (entree_neuve(d) or (lues is not None and entree_neuve(q))):
                     continue
                 md_ = mots(d['texte'] + ' ' + d['libelle'])
                 communs = mq & md_
@@ -937,7 +1068,7 @@ def releve(studio, dossier=None, incremental=False):
         actives_r = [r for r in regles if r['etat'] == 'actif']
         for i, r1 in enumerate(actives_r):
             for r2 in actives_r[i + 1:]:
-                if not (neuf(r1.get('date')) or neuf(r2.get('date'))):
+                if not (entree_neuve(r1) or entree_neuve(r2)):
                     continue
                 if r1['fichier'] != r2['fichier']:
                     continue
@@ -951,17 +1082,27 @@ def releve(studio, dossier=None, incremental=False):
                     ajouter('regles', valeur(vieux, studio, vieux['fichier']), valeur(jeune, studio, jeune['fichier']),
                             [(vieux['fichier'], r['ligne'] - 1, r['brute'], texte_r) for r in (vieux, jeune)],
                             vieux['libelle'])
-        # (f) re-read only: a recent source whose line meets an active rule or decision.
+        # (f) re-read only: a new line of a source (meeting, mail, Slack) that meets an active rule or decision. A
+        # source is read again only when it is new or its size changed since the last complete pass; without
+        # `lignes-lues.json`, the sources whose name starts with a date since « Dernier passage ».
         if depuis:
-            for rel in sources_recentes(studio, depuis_ts)[:40]:
-                lignes = (lire_texte(pathlib.Path(studio) / rel) or '').splitlines()
+            for rel, taille in sorted(sources.items()):
+                if lues is not None and lues['sources'].get(rel) == taille:
+                    continue
+                lignes = lire_source(rel, taille)
+                if lues is None:
+                    date = re.match(r'\d{4}-\d{2}-\d{2}', os.path.basename(rel))
+                    if not date or date.group(0) < depuis:
+                        continue            # read and kept as read, never compared: older than the last pass
+                neuves = [(i, mots_de_fond(lignes[i])) for i, l in enumerate(lignes) if lues is None or ligne_neuve(l)]
                 n = 0
                 for e in actives + actives_r:
                     if source_chemin(e['source'], studio) == rel:
                         continue            # the source this entry was written from
                     me = mots(e['texte'])
-                    for i, l in enumerate(lignes):
-                        if len(me & mots(l)) >= 3:
+                    for i, fond in neuves:
+                        l = lignes[i]
+                        if len(me & fond) >= REVIREMENT_MOTS:
                             date = re.match(r'\d{4}-\d{2}-\d{2}', os.path.basename(rel))
                             ajouter('revirement', valeur(e, studio, 'projet/regles-metier.md'),
                                     {'texte': une_ligne(l, 400), 'source': rel,
@@ -976,9 +1117,10 @@ def releve(studio, dossier=None, incremental=False):
 
     # (g) an html page whose markdown twin is under a banner, without one itself: one subject per page.
     for rel, md in sorted(jumeaux.items()):
-        if depuis and max(os.path.getmtime(pathlib.Path(studio) / f) for f in (rel, md)) < depuis_ts:
-            continue
         ls = texte_html((lire_texte(pathlib.Path(studio) / rel) or '').splitlines())
+        lu.update(empreinte(l) for l in ls)
+        if depuis and lues is not None and not any(ligne_neuve(l) for l in ls + (index.textes.get(md) or [])):
+            continue
         i = next((k for k, l in enumerate(ls) if len(l) >= 12), 0)
         date = registre.jjmmaaaa(dt.date.fromtimestamp(os.path.getmtime(pathlib.Path(studio) / md)))
         ajouter('jumeau', {'texte': f'page sans bandeau, présentée comme à jour : {une_ligne(ls[i] if ls else rel, 200)}',
@@ -990,8 +1132,10 @@ def releve(studio, dossier=None, incremental=False):
     # (h) the project's state: a count of questions, replaced decisions or story map items, and the phase, that the
     # Studio itself contradicts. Counted by the script, the judge only says whether the line means the same thing.
     for genre, titre, attendu, source, lignes_ in etat_du_projet(studio, magasins, questions, decisions, index):
-        source_neuve = os.path.getmtime(pathlib.Path(studio) / source) >= depuis_ts
-        trouves = lignes_ if not depuis or source_neuve else [t for t in lignes_ if t[0] in docs_neufs]
+        # A count read in the Studio is new when the count itself changed since the last pass, not only its lines.
+        lu.add(empreinte(attendu))
+        source_neuve = lues is None or ligne_neuve(attendu) or any(ligne_neuve(l) for l in index.textes.get(source) or [])
+        trouves = lignes_ if not depuis or source_neuve else [t for t in lignes_ if ligne_neuve(t[2])]
         ajouter(genre, {'texte': une_ligne(trouves[0][2], 300) if trouves else '', 'source': trouves[0][0] if trouves else '',
                         'date': None, 'code': None, 'libelle': titre, 'entree': ''},
                 {'texte': attendu, 'source': source, 'date': registre.jjmmaaaa(
@@ -1010,6 +1154,15 @@ def releve(studio, dossier=None, incremental=False):
             'dossier': dossier, 'depuis': reg['dernier_passage'] if depuis else None, 'sujets': sujets,
             'titres': titres, 'jugements': {}, 'marquages': [], 'decisions': [], 'absences': [], 'ecrit': False,
             'sous_bandeau': sorted(sous_bandeau)}
+    if not dossier:
+        # What this pass read, kept with « Dernier passage » when the pass is complete (ecrire_lignes_lues).
+        for ls in index.textes.values():
+            lu.update(empreinte(l) for l in ls)
+        if not depuis:
+            for rel, taille in sources.items():     # a whole-Studio pass keeps every source as read
+                lire_source(rel, taille)
+        lu.discard(None)
+        plan['lu'] = {'lignes': ''.join(sorted(lu)), 'sources': sources_lues}
     plan['lots'] = repartir(plan)
     plan['cout'] = estimer_cout(plan)
     return plan
@@ -1083,40 +1236,63 @@ def cout_sous_agents(lots, tok, sortie):
     return cout_usd('sonnet', ecrits, sortie, relus), ecrits, relus
 
 
-def cout_session_releve(lots):
-    """The conflicts session's own calls during a relevé (Opus): launching and receiving each batch."""
+def cout_tete(lots, tok_car, sortie):
+    """The batches judged headless (`juger-lots`): one Sonnet call per batch, no cache: (usd, tokens read)."""
+    if not lots:
+        return 0.0, 0
+    entree = lots * TETE_SOCLE + tok_car * CARACTERES_PAR_TOKEN_LOT / CARACTERES_PAR_TOKEN_TETE
+    prix_entree, prix_sortie, _ = PRIX['sonnet']
+    return (entree * prix_entree + sortie * prix_sortie) / 1e6 * TETE_REPRISES, int(entree * TETE_REPRISES)
+
+
+def cout_session_releve(lots, mode='sous-agents'):
+    """The conflicts session's own calls during a relevé (Opus). With the sub-agents, launching and receiving each
+    batch, its context growing with each; with `juger-lots`, its fixed calls only."""
+    if mode == 'tete':
+        ecrits = SESSION_BASE * SESSION_PART_ECRITE + SESSION_ECRITS_TETE
+        relus = SESSION_APPELS_FIXES * (SESSION_BASE + SESSION_ECRITS_TETE)
+        return cout_usd('opus', ecrits, SESSION_SORTIE_FIXE, relus), ecrits + relus
     appels = SESSION_APPELS_FIXES + SESSION_APPELS_PAR_LOT * lots
     ecrits = SESSION_BASE * SESSION_PART_ECRITE + lots * SESSION_ECRITS_PAR_LOT
     relus = appels * (SESSION_BASE + lots * SESSION_CROISSANCE_PAR_LOT)
     return cout_usd('opus', ecrits, SESSION_SORTIE_FIXE + lots * SESSION_SORTIE_PAR_LOT, relus), ecrits + relus
 
 
-def cout_session_decisions(lots, decisions):
+def cout_session_decisions(lots, decisions, mode='sous-agents'):
     """Then the decisions asked one by one, in the same session whose context has grown with the relevé."""
     if not decisions:
         return 0.0
     appels = decisions + math.ceil(decisions / ORDRE_ECRITURE) + 2
     ecrits = decisions * TOKENS_PAR_DECISION
-    contexte = SESSION_BASE + lots * SESSION_CROISSANCE_PAR_LOT + ecrits / 2
+    croissance = SESSION_ECRITS_TETE if mode == 'tete' else lots * SESSION_CROISSANCE_PAR_LOT
+    contexte = SESSION_BASE + croissance + ecrits / 2
     return cout_usd('opus', ecrits, decisions * 150, appels * contexte)
 
 
-def estimer_cout(plan):
-    """A ceiling for one launch: Sonnet sub-agents on the extracts, and the conflicts session (Opus) that launches them,
-    shows the preview and asks the decisions. Markings and register lines are written by the script: no model."""
+def estimer_cout(plan, mode=None):
+    """A ceiling for one launch: the batches judged by Sonnet on the extracts (headless calls of `juger-lots`, or
+    in-session sub-agents when `claude` is not on the PATH), and the conflicts session (Opus) that launches them, shows
+    the preview and asks the decisions. Markings and register lines are written by the script: no model."""
+    mode = mode or mode_jugement()
     n = len(plan['sujets'])
     lots = len(plan['lots']) if plan.get('lots') is not None else (math.ceil(n / LOT) if n else 0)
     car = sum(len(x['contexte']) + 200 for s in plan['sujets'] for x in s['extraits']) + \
         sum(len(s['ancien']['texte']) + len(s['nouveau']['texte']) + 150 for s in plan['sujets'])
     tok = car / CARACTERES_PAR_TOKEN_LOT
-    agents, a_ecrits, a_relus = cout_sous_agents(lots, tok, n * SORTIE_PAR_SUJET)
+    sortie = n * SORTIE_PAR_SUJET
+    if mode == 'tete':
+        agents, a_lus = cout_tete(lots, tok, sortie)
+        par_agent, a_tokens = (int(a_lus / lots) if lots else 0), int(a_lus + sortie)
+    else:
+        agents, a_ecrits, a_relus = cout_sous_agents(lots, tok, sortie)
+        par_agent = int(AGENT_SOCLE + (tok + sortie) / lots) if lots else 0
+        a_tokens = int(a_ecrits + a_relus + sortie)
     decisions = math.ceil(n * PART_PM)
-    releve, s_tokens = cout_session_releve(lots) if n else (0.0, 0)
-    questions = cout_session_decisions(lots, decisions)
+    releve, s_tokens = cout_session_releve(lots, mode) if n else (0.0, 0)
+    questions = cout_session_decisions(lots, decisions, mode)
     total = (agents + releve + questions) * MARGE
-    return {'sujets': n, 'lots': lots, 'decisions_estimees': decisions, 'tokens_extraits': int(tok),
-            'tokens_par_sous_agent': int(AGENT_SOCLE + (tok + n * SORTIE_PAR_SUJET) / lots) if lots else 0,
-            'tokens_sous_agents': int(a_ecrits + a_relus + n * SORTIE_PAR_SUJET), 'tokens_session_releve': int(s_tokens),
+    return {'sujets': n, 'lots': lots, 'mode': mode, 'decisions_estimees': decisions, 'tokens_extraits': int(tok),
+            'tokens_par_sous_agent': par_agent, 'tokens_sous_agents': a_tokens, 'tokens_session_releve': int(s_tokens),
             'usd_sous_agents': round(agents * MARGE, 2), 'usd_session_releve': round(releve * MARGE, 2),
             'usd_session_decisions': round(questions * MARGE, 2), 'usd_session': round((releve + questions) * MARGE, 2),
             'usd': round(total, 2), 'pourcent_semaine': round(total / POURCENT_USD, 2),
@@ -1124,7 +1300,7 @@ def estimer_cout(plan):
 
 
 def estimer_passe(plan):
-    """A ceiling for one Monday pass inside the morning point (Sonnet, the task already running: only what the pass adds
+    """A ceiling for one daily pass inside the morning point (Sonnet, the task already running: only what the pass adds
     is counted): the subjects and the judging instructions written to the task's context, its judgments, and that
     context re-read by the task's remaining calls. With nothing new, nothing is added: 0 $."""
     n = len(plan['sujets'])
@@ -1155,8 +1331,8 @@ def cout_des_tickets(plan):
 def texte_cout_passe(c, depuis):
     quoi = (f"{c['sujets']} sujet{'s' if c['sujets'] > 1 else ''} nouveau{'x' if c['sujets'] > 1 else ''} depuis le "
             f"{registre.jjmmaaaa(depuis)}" if depuis else f"{c['sujets']} sujets (aucun passage complet encore : tout le Studio)")
-    return (f"Passe du lundi, dans le point du matin : environ {fr(float(c['pourcent_semaine']))} % de ta semaine "
-            f"({fr(float(c['usd']))} $) pour ce qu'il y a aujourd'hui ({quoi}) ; rien une semaine sans rien de nouveau. "
+    return (f"Passe du matin, chaque jour : environ {fr(float(c['pourcent_semaine']))} % de ta semaine "
+            f"({fr(float(c['usd']))} $) pour ce qu'il y a aujourd'hui ({quoi}) ; rien un jour sans rien de nouveau. "
             "Aucune question, rien n'est marqué dans les documents : elle inscrit les décisions au registre et prépare "
             "les marquages sûrs pour ton prochain go.")
 
@@ -1173,7 +1349,17 @@ def millions(n):
 def texte_cout(c, dossiers=None):
     pl = lambda n, mot: f"{n} {mot}{'s' if n > 1 else ''}"
     lignes = [f"Coût estimé : {fr(float(c['pourcent_semaine']))} % de ta semaine ({fr(float(c['usd']))} $), plafond d'un lancement 0,5 %."]
-    if c.get('lots'):
+    if c.get('lots') and c.get('mode') == 'tete':
+        lignes.append(
+            f"- {pl(c['sujets'], 'sujet')} en {pl(c['lots'], 'lot')}, jugés par Sonnet sur extraits seulement, un appel sans "
+            f"outil par lot lancé par le script : environ {millions(c.get('tokens_par_sous_agent', 0))} tokens chacun, dont "
+            f"{millions(TETE_SOCLE)} de consigne ; {millions(c.get('tokens_sous_agents', 0))}"
+            f"{' de' if c.get('tokens_sous_agents', 0) >= 1e6 else ''} tokens en tout : {fr(float(c['usd_sous_agents']))} $")
+        lignes.append(
+            f"- la session des conflits (Opus, environ {millions(SESSION_BASE)} tokens de contexte relus à chaque appel) : "
+            f"lancer le jugement et lire l'aperçu, {fr(float(c.get('usd_session_releve', c['usd_session'])))} $ ; puis environ "
+            f"{pl(c['decisions_estimees'], 'décision')} posées une par une, {fr(float(c.get('usd_session_decisions', 0.0)))} $")
+    elif c.get('lots'):
         lignes.append(
             f"- {pl(c['sujets'], 'sujet')} en {pl(c['lots'], 'lot')}, jugés par des sous-agents Sonnet sur extraits seulement : "
             f"environ {millions(c.get('tokens_par_sous_agent', 0))} tokens de contexte chacun, dont {millions(AGENT_SOCLE)} "
@@ -1420,6 +1606,201 @@ def juger(plan, jugements):
         plan['jugements'][v['sujet']] = v
     construire(plan)
     return erreurs
+
+
+def juger_le_plan(chemin_plan, fichiers=None):
+    """Every judgment file next to the plan (or `fichiers`) merged into it; the plan saved, the prepared preview
+    noted. Returns (preview text, errors)."""
+    plan = charger_plan(chemin_plan)
+    p = pathlib.Path(chemin_plan)
+    fichiers = fichiers or sorted(glob.glob(str(p.with_name(p.stem + '.jugements-*.json'))))
+    jugements = []
+    for f in fichiers:
+        with open(f, encoding='utf-8') as h:
+            x = json.load(h)
+        jugements += x if isinstance(x, list) else x.get('jugements', [])
+    erreurs = juger(plan, jugements)
+    sauver_plan(chemin_plan, plan)
+    noter_pret(plan, chemin_plan)
+    return apercu(plan), erreurs
+
+
+# ---------- the batches judged by the script itself: one headless Sonnet call per batch (`juger-lots`)
+# Measured 2026-11-18: an in-session sub-agent carries about 78,000 tokens before its batch (system prompt, the tools'
+# schemas, the rules, the agent listing) for 16,000 tokens of extracts, and the Opus session pays about three calls
+# per batch to launch and receive it, its context growing with each. A `claude -p` call with no tool, no setting
+# source, no MCP server and the judging brief as its system prompt carries under 1,000 tokens besides the brief, and
+# the session makes one call for all the batches. Same brief as the Monday pass (CONSIGNE_JUGEMENT), same checks
+# (valider_jugement): the judgment and what is written do not change, only who carries it.
+
+TETE_MODELE = 'sonnet'
+TETE_EFFORT = 'medium'
+TETE_PARALLELES = 3           # calls at a time
+TETE_BUDGET_APPEL = 1.0       # $ ceiling of one call (--max-budget-usd): a batch costs about 0.1 $
+TETE_DELAI = 900              # seconds for one call
+TETE_ESSAIS = 2               # a batch whose answer has refused or missing subjects is asked again once, for them only
+
+
+def consigne_tete():
+    """The Monday pass's brief, the subjects given as the message, the answer the JSON list alone."""
+    return CONSIGNE_JUGEMENT.replace("donnés dans `texte` : tu ne lis aucun fichier",
+                                     "donnés dans le message : tu ne lis aucun fichier") + (
+        "\nRéponds seulement par la liste JSON `jugements`, un objet par sujet du message, sans texte autour ni bloc "
+        "de code.")
+
+
+def claude_cli():
+    """The Claude Code command line, or None: then the batches are judged by in-session sub-agents (the fallback).
+    CONFLITS_JUGEMENT=sous-agents forces the fallback; CONFLITS_CLAUDE names another command."""
+    if os.environ.get('CONFLITS_JUGEMENT') == 'sous-agents':
+        return None
+    if os.environ.get('CONFLITS_CLAUDE'):
+        return os.environ['CONFLITS_CLAUDE']
+    import shutil
+    # Mon Studio's page computes the estimate without the shell's PATH: the installer's usual places too.
+    for x in [shutil.which('claude')] + [os.path.expanduser(c) for c in CLAUDE_EMPLACEMENTS]:
+        if x and os.path.isfile(x) and os.access(x, os.X_OK):
+            return x
+    return None
+
+
+CLAUDE_EMPLACEMENTS = ('~/.local/bin/claude', '~/.claude/local/claude', '/opt/homebrew/bin/claude',
+                       '/usr/local/bin/claude')
+
+
+def mode_jugement():
+    return 'tete' if claude_cli() else 'sous-agents'
+
+
+def commande_tete(cli):
+    return [cli, '-p', '--model', TETE_MODELE, '--effort', TETE_EFFORT, '--tools', '', '--system-prompt',
+            consigne_tete(), '--setting-sources', '', '--strict-mcp-config', '--no-session-persistence',
+            '--disable-slash-commands', '--output-format', 'json', '--max-budget-usd', str(TETE_BUDGET_APPEL)]
+
+
+def liste_json(texte):
+    """The JSON list in a model's answer (code fences or a sentence around it tolerated). Raises ValueError."""
+    t = (texte or '').strip()
+    debut, fin = t.find('['), t.rfind(']')
+    if debut < 0 or fin < debut:
+        raise ValueError('pas de liste JSON dans la réponse')
+    x = json.loads(t[debut:fin + 1])
+    if not isinstance(x, list):
+        raise ValueError("la réponse n'est pas une liste")
+    return [j for j in x if isinstance(j, dict)]
+
+
+def appel_tete(cli, texte, executer=None):
+    """One headless call: (judgments, usage record). Prompt caching is off: each call is single, and a cache write
+    costs twice the input it saves nothing on (measured: 946 tokens, 0.0038 $ cached, 0.0019 $ not). Runs in an empty
+    temporary folder, so that no project file (CLAUDE.md) is loaded. Raises RuntimeError(message, usage) on a failure."""
+    import subprocess
+    import tempfile
+    env = dict(os.environ, DISABLE_PROMPT_CACHING='1')
+    with tempfile.TemporaryDirectory(prefix='conflits-lot-') as vide:
+        try:
+            r = (executer or (lambda cmd, entree, cwd, env: subprocess.run(
+                cmd, input=entree, capture_output=True, text=True, cwd=cwd, env=env, timeout=TETE_DELAI)))(
+                commande_tete(cli), texte, vide, env)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(f'appel impossible : {exc}', None)
+    try:
+        sortie = json.loads(r.stdout)
+    except (ValueError, TypeError):
+        raise RuntimeError(f"réponse illisible (code {r.returncode}) : {une_ligne((r.stderr or r.stdout or '')[:300])}",
+                           None)
+    u = sortie.get('usage') or {}
+    trace = {'usd': float(sortie.get('total_cost_usd') or 0.0), 'entree': int(u.get('input_tokens') or 0),
+             'cache_ecrit': int(u.get('cache_creation_input_tokens') or 0),
+             'cache_lu': int(u.get('cache_read_input_tokens') or 0), 'sortie': int(u.get('output_tokens') or 0),
+             'secondes': round((sortie.get('duration_ms') or 0) / 1000)}
+    if sortie.get('is_error') or r.returncode:
+        raise RuntimeError(f"échec (code {r.returncode}) : {une_ligne(str(sortie.get('result') or r.stderr)[:300])}",
+                           trace)
+    try:
+        return liste_json(sortie.get('result')), trace
+    except ValueError as exc:
+        raise RuntimeError(str(exc), trace)
+
+
+def juger_un_lot(plan, chemin_plan, k, cli, executer=None):
+    """Batch k judged headless, its judgments written where `juger` reads them. Returns
+    {'lot', 'ok', 'jugements', 'manquants', 'erreurs', 'appels': [usage records]}."""
+    lot = lots_du_plan(plan)[k - 1]
+    par_id = {s['id']: s for s in plan['sujets']}
+    texte = texte_lot(plan, k)
+    bons, erreurs, appels = {}, [], []
+    for _ in range(TETE_ESSAIS):
+        try:
+            jugements, trace = appel_tete(cli, texte, executer)
+        except RuntimeError as exc:
+            if exc.args[1]:
+                appels.append(exc.args[1])
+            erreurs = [str(exc.args[0])]
+            continue
+        appels.append(trace)
+        erreurs = []
+        for j in jugements:
+            if j.get('sujet') not in lot:
+                continue
+            try:
+                valider_jugement(plan, j)
+            except ValueError as e:
+                erreurs.append(str(e))
+                continue
+            bons[j['sujet']] = j
+        reste = [i for i in lot if i not in bons]
+        if not reste:
+            break
+        # Asked again for the refused or missing subjects only, with why they were refused.
+        texte = (f"Lot {k} · {len(reste)} sujet(s) à juger de nouveau"
+                 + (f" ; refusés : {' ; '.join(erreurs)}" if erreurs else '') + '\n\n'
+                 + '\n'.join(texte_sujet(plan, par_id[i]) for i in reste))
+    if bons:
+        ecrire_texte(chemin_jugements(chemin_plan, k),
+                     json.dumps([bons[i] for i in lot if i in bons], ensure_ascii=False, indent=1))
+    manquants = [i for i in lot if i not in bons]
+    return {'lot': k, 'ok': not manquants, 'jugements': len(bons), 'manquants': manquants, 'erreurs': erreurs,
+            'appels': appels}
+
+
+def lot_deja_juge(plan, chemin_plan, k):
+    """A batch whose judgment file covers all its subjects (a run stopped midway starts again after it)."""
+    try:
+        with open(chemin_jugements(chemin_plan, k), encoding='utf-8') as h:
+            x = json.load(h)
+    except (OSError, ValueError):
+        return False
+    x = x if isinstance(x, list) else x.get('jugements', [])
+    return set(lots_du_plan(plan)[k - 1]) <= {j.get('sujet') for j in x if isinstance(j, dict)}
+
+
+def chemin_couts(chemin_plan):
+    p = pathlib.Path(chemin_plan)
+    return p.with_name(f'{p.stem}.couts.json')
+
+
+def juger_les_lots(chemin_plan, paralleles=TETE_PARALLELES, executer=None):
+    """Every batch not judged yet, judged headless, `paralleles` at a time; each call's real usage appended to
+    `<plan>.couts.json`. Returns {'mode', 'lots', 'faits', 'a_refaire', 'usd', 'tokens', 'resultats'}."""
+    from concurrent.futures import ThreadPoolExecutor
+    plan = charger_plan(chemin_plan)
+    n = len(lots_du_plan(plan))
+    a_faire = [k for k in range(1, n + 1) if not lot_deja_juge(plan, chemin_plan, k)]
+    cli = claude_cli()
+    if not cli:
+        return {'mode': 'sous-agents', 'lots': n, 'faits': [], 'a_refaire': a_faire, 'usd': 0.0, 'tokens': {},
+                'resultats': []}
+    with ThreadPoolExecutor(max_workers=max(1, paralleles)) as ex:
+        resultats = list(ex.map(lambda k: juger_un_lot(plan, chemin_plan, k, cli, executer), a_faire))
+    traces = [dict(t, lot=r['lot']) for r in resultats for t in r['appels']]
+    deja = registre._lire_json(chemin_couts(chemin_plan))
+    ecrire_texte(chemin_couts(chemin_plan),
+                 json.dumps((deja if isinstance(deja, list) else []) + traces, ensure_ascii=False, indent=1))
+    tokens = {c: sum(t[c] for t in traces) for c in ('entree', 'cache_ecrit', 'cache_lu', 'sortie')}
+    return {'mode': 'tete', 'lots': n, 'faits': [r['lot'] for r in resultats if r['ok']],
+            'a_refaire': [r['lot'] for r in resultats if not r['ok']], 'usd': round(sum(t['usd'] for t in traces), 4),
+            'tokens': tokens, 'resultats': resultats}
 
 
 # ---------- the preview
@@ -1746,7 +2127,11 @@ def ecrire(plan, pm, decisions_seules=False, passe=False):
         avant = registre.lire_fichier(chemin_registre(plan))['dernier_passage']
         # Never back in time: a pass's markings written later must not make the next re-read start earlier.
         if not avant or registre.iso(avant) <= plan['date']:
-            registre.poser_dernier_passage(chemin_registre(plan), plan['date'])
+            # What it read first: « Dernier passage » never moves past lines that were not kept as read.
+            if ecrire_lignes_lues(plan) or 'lu' not in plan:
+                registre.poser_dernier_passage(chemin_registre(plan), plan['date'])
+            else:
+                complet = False
     plan['dernier_passage_pose'] = complet
     fichiers = {m['fichier'] for m in plan['marquages'] if m['etat'] == 'pose'}
     ajouts = sum(1 for a in plan['absences'] if a['etat'] == 'pose')
@@ -2135,7 +2520,10 @@ def attente(studio):
 # `cloturer`. Nothing is marked in the documents: the decisions go to the register, the safe markings wait in the plan
 # for the PM's grouped go in the conflicts session.
 
-PASSE_MATIN_CARACTERES = 90000   # subjects' text handed to the morning task in one week, all Studios together
+# Subjects' text handed to the morning task in one day, all Studios together. Measured on 2026-11-23 on two real
+# Studios, one heavy day (Friday to Monday): 47 subjects, 133,000 characters, judged by Sonnet for 0.54 $ (0.04 % of
+# the week); 200,000 characters stay under 0.1 % a morning, so a busy Studio is never left waiting for days.
+PASSE_MATIN_CARACTERES = 200000
 INGESTION_ACTIVE_S = 8 * 86400   # an automatic ingestion that passed within 8 days writes its own cases to the register
 
 
@@ -2159,10 +2547,10 @@ def ingestion_active(studio, maintenant=None):
     return False
 
 
-def ouvrir_passe(studio):
-    """The weekly pass: only what is new since « Dernier passage », written as a plan `passe-<date>.json` next to the
-    register. {'etat': 'jamais' | 'rien' | 'ouverte', 'texte', 'chemin', 'plan'}."""
-    plan = releve(studio, None, True)
+def ouvrir_passe(studio, plan=None):
+    """The daily pass: only what is new since « Dernier passage », written as a plan `passe-<date>.json` next to the
+    register. {'etat': 'jamais' | 'rien' | 'ouverte', 'texte', 'chemin', 'plan'}. `plan`: a re-read already made."""
+    plan = plan or releve(studio, None, True)
     if not plan.get('depuis'):
         # Without « Dernier passage » the pass would read the whole Studio every week, at a cost no go covered.
         return {'etat': 'jamais', 'chemin': None, 'plan': plan,
@@ -2188,16 +2576,32 @@ def passe_du_matin(studio, reste):
     nothing to judge; {'trop': True} when the subjects' text is over `reste` characters (no plan is kept: the next
     Monday re-reads from the same « Dernier passage »); else {'plan', 'sujets', 'texte'}."""
     plan = releve(studio, None, True)
-    if not plan.get('depuis') or not plan['sujets']:
+    if not plan.get('depuis'):
+        return None
+    if not plan['sujets']:
+        # Nothing new to judge is a complete pass: « Dernier passage » moves to today with what it read, so the tab
+        # says « à jour » and tomorrow re-reads only tomorrow's lines.
+        cloturer_sans_sujet(plan)
         return None
     texte = '\n'.join(texte_lot(plan, k) for k in range(1, len(lots_du_plan(plan)) + 1))
     if len(texte) > reste:
         return {'trop': True, 'sujets': len(plan['sujets'])}
-    r = ouvrir_passe(studio)
+    r = ouvrir_passe(studio, plan)
     if r['etat'] != 'ouverte':
         return None
     texte = '\n'.join(texte_lot(r['plan'], k) for k in range(1, len(lots_du_plan(r['plan'])) + 1))
     return {'plan': r['chemin'], 'sujets': len(r['plan']['sujets']), 'texte': texte}
+
+
+def cloturer_sans_sujet(plan):
+    """A re-read that found no subject: « Dernier passage » set to the plan's day (never back in time), and what it read."""
+    avant = registre.lire_fichier(chemin_registre(plan))['dernier_passage']
+    if plan['sujets'] or plan.get('dossier') or (avant and registre.iso(avant) > plan['date']):
+        return False
+    if not ecrire_lignes_lues(plan):
+        return False
+    registre.poser_dernier_passage(chemin_registre(plan), plan['date'])
+    return True
 
 
 def cloturer(chemin_plan, jugements=None):
@@ -2352,10 +2756,27 @@ def trouver_cas(cas, quoi):
 
 def charger_plan(chemin):
     with open(chemin, encoding='utf-8') as f:
-        return json.load(f)
+        plan = json.load(f)
+    if isinstance(plan, dict) and 'lu' not in plan:
+        try:
+            with open(chemin_lu_du_plan(chemin), encoding='utf-8') as f:
+                plan['lu'] = json.load(f)
+        except (OSError, ValueError):
+            pass
+    return plan
+
+
+def chemin_lu_du_plan(chemin):
+    """What a pass read (about a megabyte on a large Studio) lives next to its plan, never inside it."""
+    p = pathlib.Path(chemin)
+    return p.with_name(p.stem + '.lu.json')
 
 
 def sauver_plan(chemin, plan):
+    plan = dict(plan)
+    lu = plan.pop('lu', None)
+    if isinstance(lu, dict):
+        ecrire_texte(chemin_lu_du_plan(chemin), json.dumps(lu, ensure_ascii=False))
     ecrire_texte(chemin, json.dumps(plan, ensure_ascii=False, indent=1) + '\n')
 
 
@@ -2367,7 +2788,7 @@ def plans_du_studio(studio):
     d = pathlib.Path(studio) / 'projet' / '.conflits'
     # The previews of a catch-up or a re-read, and the weekly passes; never a sub-agent's judgments file.
     return sorted((f for motif in ('apercu-*.json', 'passe-*.json', 'registre.json') for f in glob.glob(str(d / motif))
-                   if '.jugements-' not in f), key=os.path.getmtime, reverse=True)
+                   if '.jugements-' not in f and not f.endswith('.lu.json')), key=os.path.getmtime, reverse=True)
 
 
 def chemin_extraction(studio):
@@ -2472,6 +2893,8 @@ def main(argv=None):
     x = sp.add_parser('lot'); x.add_argument('plan'); x.add_argument('k', type=int)
     x.add_argument('--sortie', help='écrit le lot dans ce fichier, à lire en une fois')
     x = sp.add_parser('juger'); x.add_argument('plan'); x.add_argument('jugements', nargs='*')
+    x = sp.add_parser('juger-lots'); x.add_argument('plan')
+    x.add_argument('--paralleles', type=int, default=TETE_PARALLELES)
     x = sp.add_parser('apercu'); x.add_argument('plan')
     x = sp.add_parser('ecrire'); x.add_argument('plan'); x.add_argument('--pm', required=True)
     x.add_argument('--decisions-seules', action='store_true')
@@ -2492,6 +2915,9 @@ def main(argv=None):
     x = sp.add_parser('passe'); x.add_argument('studio'); x.add_argument('--estimer', action='store_true')
     x = sp.add_parser('cloturer'); x.add_argument('plan')
     x = sp.add_parser('attente'); x.add_argument('studio')
+    x = sp.add_parser('cacher')  # cases kept in the register, never shown as conflicts in the tab's journal
+    x.add_argument('studio'); x.add_argument('cas', nargs='+', help='C4 C8 …')
+    x.add_argument('--raison', required=True); x.add_argument('--pm', required=True)
     x = sp.add_parser('regler'); x.add_argument('studio'); x.add_argument('--cas', type=int)
     x.add_argument('--jours', type=int)
     x = sp.add_parser('reprendre'); x.add_argument('studio')
@@ -2516,7 +2942,7 @@ def main(argv=None):
 # The commands that write the register, or what the PM has seen of it (vu.json, reglages.json): Mon Studio's tab
 # follows them at once (registre.copier_dans_mon_studio). `reprendre` copies only when it writes (--ecrire).
 COPIENT = {'ecrire', 'valider', 'repondre', 'trancher', 'rouvrir', 'cloturer', 'reprendre', 'regler', 'formulaires',
-           'evidents', 'attente', 'ouverts'}
+           'evidents', 'attente', 'ouverts', 'cacher'}
 
 
 def studio_de_la_commande(a):
@@ -2531,6 +2957,14 @@ def studio_de_la_commande(a):
 
 
 def commande(a):
+    if a.cmd == 'cacher':
+        try:
+            ajoutes = registre.mettre_hors_journal(a.studio, a.cas, a.raison, a.pm)
+        except ValueError as e:
+            print(str(e))
+            return 1
+        print(f"Hors du journal de l'onglet : {', '.join(ajoutes) or 'rien de nouveau'}. Le registre est inchangé.")
+        return 0
     if a.cmd in ('estimer', 'releve'):
         if not (pathlib.Path(a.studio) / '.claude' / '.studio-manifest.json').exists():
             print(f"« {a.studio} » n'est pas un Studio (pas de .claude/.studio-manifest.json).")
@@ -2563,17 +2997,32 @@ def commande(a):
         print(f"\nRéponse attendue dans : {chemin_jugements(a.plan, a.k)}")
         return 0
     if a.cmd == 'juger':
-        plan = charger_plan(a.plan)
-        fichiers = a.jugements or sorted(glob.glob(str(pathlib.Path(a.plan).with_name(pathlib.Path(a.plan).stem + '.jugements-*.json'))))
-        jugements = []
-        for f in fichiers:
-            with open(f, encoding='utf-8') as h:
-                x = json.load(h)
-            jugements += x if isinstance(x, list) else x.get('jugements', [])
-        erreurs = juger(plan, jugements)
-        sauver_plan(a.plan, plan)
-        noter_pret(plan, a.plan)
-        print(apercu(plan))
+        texte, erreurs = juger_le_plan(a.plan, a.jugements)
+        print(texte)
+        for e in erreurs:
+            print(f"Jugement écarté : {e}")
+        return 0
+    if a.cmd == 'juger-lots':
+        r = juger_les_lots(a.plan, a.paralleles)
+        if r['mode'] == 'sous-agents':
+            print("Pas de `claude` en ligne de commande ici : les lots se jugent par sous-agents (repli), lots "
+                  + ', '.join(map(str, r['a_refaire'])) + '.')
+            return 3
+        t = r['tokens']
+        if r['resultats']:
+            nb = lambda n: f'{n:,}'.replace(',', ' ')
+            print(f"{len(r['faits'])} lot(s) jugé(s) sur {len(r['resultats'])} lancé(s) ({r['lots']} au plan), Sonnet sans "
+                  f"outil : {fr(float(r['usd']))} $ réels ({nb(t['entree'] + t['cache_ecrit'] + t['cache_lu'])} tokens lus, "
+                  f"{nb(t['sortie'])} écrits).")
+        for x in r['resultats']:
+            if not x['ok']:
+                print(f"Lot {x['lot']} : {len(x['manquants'])} sujet(s) sans jugement ({'; '.join(x['erreurs'])[:300]}).")
+        if r['a_refaire']:
+            print("À juger par sous-agents (repli, « Brief d'un sous-agent »), lots "
+                  + ', '.join(map(str, r['a_refaire'])) + f", puis : conflits.py juger {a.plan}")
+            return 3
+        texte, erreurs = juger_le_plan(a.plan)
+        print(texte)
         for e in erreurs:
             print(f"Jugement écarté : {e}")
         return 0

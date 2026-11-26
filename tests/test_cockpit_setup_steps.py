@@ -69,7 +69,7 @@ class Steps(Base):
         self.assertEqual([e['cle'] for e in r['etapes']], ['etape-matin', 'etape-terminal'])
         self.assertEqual(r['matin'], 'a_faire')
         matin, terminal = r['etapes']
-        self.assertIn('passe des conflits du lundi en dépend', matin['note'])
+        self.assertIn('passe quotidienne des conflits en dépend', matin['note'])
         self.assertEqual(matin['copier'], '/cockpit:mon-studio point du matin')
         self.assertRegex(matin['cout'], r'\d,\d\d \$ par jour ouvré, \d,\d\d % de ta semaine')
         self.assertIn("n'est pas installé sur ce Mac", terminal['detail'])
@@ -171,7 +171,8 @@ class Install(unittest.TestCase):
                           'set_task_models', 'morning_blocked'} & set(s['todo']), s['todo'])
         self.assertIsNone(s['terminalLogin'])
         self.assertEqual(s['miseEnRoute'], {'ecartees': [], 'matin': 'a_faire'})
-        self.assertFalse(self.i.CLAUDE_SETTINGS.exists(), 'no permission written by the installation')
+        settings = json.loads(self.i.CLAUDE_SETTINGS.read_text(encoding='utf-8'))
+        self.assertEqual(settings, {'permissions': {'deny': self.i.ACTION_TOOLS}}, 'no allow rule written by the installation')
         state = json.loads(self.i.STATE.read_text(encoding='utf-8'))
         self.assertEqual(state['etapes'], self.i.setup_step_costs())
 
@@ -181,9 +182,10 @@ class Install(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn('ajouterait 6 autorisations', out)
         self.assertIn("Total de l'étape", out)
-        self.assertFalse(self.i.CLAUDE_SETTINGS.exists(), '`etape` writes nothing')
+        before = self.i.CLAUDE_SETTINGS.read_text(encoding='utf-8')
+        self.assertNotIn('allow', before, '`etape` writes nothing')
         self.quiet('repair')
-        self.assertFalse(self.i.CLAUDE_SETTINGS.exists(), '`repair` never writes the rules')
+        self.assertEqual(self.i.CLAUDE_SETTINGS.read_text(encoding='utf-8'), before, '`repair` never writes the allow rules')
         self.quiet('apply', '--autorisations')
         self.assertEqual(self.i.status()['scriptRules'], 'present')
 
@@ -195,7 +197,7 @@ class Install(unittest.TestCase):
 
 class Page(unittest.TestCase):
     MATIN = {'cle': 'etape-matin', 'etape': 'matin', 'titre': 'Mettre en route le point du matin', 'cout': 'environ 0,94 $',
-             'note': 'La passe des conflits du lundi en dépend.', 'detail': 'Chaque jour ouvré…',
+             'note': 'La passe quotidienne des conflits en dépend.', 'detail': 'Chaque jour ouvré…',
              'copier': '/cockpit:mon-studio point du matin'}
     TERMINAL = {'cle': 'etape-terminal', 'etape': 'terminal', 'titre': 'Connecter le Claude du Terminal', 'cout': '',
                 'note': '', 'detail': 'Six gestes…', 'copier': '/cockpit:mon-studio terminal'}
@@ -225,7 +227,7 @@ class Page(unittest.TestCase):
         html = out['miseEnRoute']
         positions = [html.index(x) for x in ('point du matin', 'Vérifier les conflits de Studio-Essai', 'Claude du Terminal')]
         self.assertEqual(positions, sorted(positions))
-        self.assertIn('La passe des conflits du lundi en dépend.', html)
+        self.assertIn('La passe quotidienne des conflits en dépend.', html)
         self.assertEqual(html.count('Pas pour moi'), 3)
         self.assertIn('data-copier="/cockpit:conflits rattrapage"', html)
         self.assertNotIn('Vérifier les conflits', out['tableau'])

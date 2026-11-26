@@ -246,7 +246,7 @@ class Page(unittest.TestCase):
         r = run_page(lignes=[ligne(bloque=True, impact='fort'), dict(ligne(), retrait='r00000000000f')], conflits=[],
                      fils_rouges=[{'studio': 'Alpha', 'sessions': [{'sessionId': SID, 'titre': 'Fil rouge Alpha'}]}],
                      matin={'etat': 'pas_passe'})
-        self.assertEqual(r['compte'], "1 à faire d'abord")   # the lines of « D'abord », not the lines of the day
+        self.assertEqual(r['compte'], "1 à faire d'abord au tableau")   # the lines of « D'abord », not the lines of the day
         self.assertEqual(run_page(lignes=[ligne()])['compte'], 'Rien ne presse')
         self.assertNotIn('Fil rouge Alpha', r['tableau'])
         self.assertTrue(r['ongletConflitsGlobalHidden'])

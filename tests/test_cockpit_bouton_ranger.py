@@ -158,6 +158,20 @@ class Page(unittest.TestCase):
         self.assertEqual(r['aRangerTitre'], '1 session finie à ranger')
         self.assertIn('Copié : colle-le dans une nouvelle session (Cmd+N)', r['aRanger'])
 
+    def test_the_request_is_visible_and_selectable_even_without_a_working_clipboard(self):
+        # PM, 2026-11-20: nothing to copy in sight. The text is in a read-only box under the list, whatever the clipboard does.
+        r = run_page(lignes=[ligne()], a_ranger=self.LISTE[:1], ranger_texte='Range ces sessions <vite>…')
+        self.assertIn('<textarea readonly class="demande-ranger"', r['aRanger'])
+        self.assertIn('Range ces sessions &lt;vite&gt;…</textarea>', r['aRanger'])
+        r = run_page(lignes=[ligne()], a_ranger=self.LISTE[:1], ranger_texte='Range ces sessions…', outils=['lignes'])
+        self.assertIn('data-demande-archivage', r['aRanger'])   # even a page without the connector's tools
+
+    def test_a_failed_copy_never_says_copied(self):
+        r = run_page(lignes=[ligne()], a_ranger=self.LISTE[:1], ranger_texte='Range ces sessions…',
+                     cliquer=[['data-ranger', '1']], ouvrirErreur='tool_error')
+        self.assertNotIn('Copié', r['aRanger'])
+        self.assertIn('Copie impossible', r['alerte'])
+
     def test_nothing_to_put_away_no_block(self):
         r = run_page(lignes=[ligne()])
         self.assertTrue(r['aRangerHidden'])

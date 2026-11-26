@@ -40,7 +40,7 @@ class HeavySession(unittest.TestCase):
     def prompt(self, sid='s1'):
         env = {k: v for k, v in os.environ.items() if not k.startswith('MON_STUDIO')}
         env['MON_STUDIO'] = str(self.ms)
-        r = subprocess.run([sys.executable, str(HOOK)], input=json.dumps({'session_id': sid, 'transcript_path': str(self.transcript)}),
+        r = subprocess.run([sys.executable, str(HOOK)], input=json.dumps({'session_id': sid, 'transcript_path': str(self.transcript), 'cwd': str(self.ms)}),
                            capture_output=True, text=True, env=env, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         return r.stdout
